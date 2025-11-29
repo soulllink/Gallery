@@ -1,5 +1,7 @@
 ## Gallery app
 
+![Screenshot of my application](https://raw.githubusercontent.com/soulllink/Gallery/refs/heads/main/Image.png)
+
 Gallery app is a modern, high-performance desktop gallery application for Windows, developed using Svelte, TypeScript, and Tauri. It provides not only basic media file viewing but also powerful tools for controlling video playback, image editing, and innovative OCR and translation features that run entirely locally thanks to Ollama.
 
 ## Key Features
