@@ -190,9 +190,8 @@
             </div>
         </div>
 
-        <!-- Keyboard Shortcuts Hint -->
         <div class="shortcuts-hint">
-            <kbd>PgUp/PgDn</kbd> Navigate • <kbd>Arrows</kbd> Pan • <kbd>H</kbd> Hide UI
+            <kbd>PgUp/PgDn</kbd> Navigate • <kbd>Arrows</kbd> Pan • <kbd>R</kbd> Rotate • <kbd>H</kbd> Hide UI
         </div>
     </div>
 {:else}

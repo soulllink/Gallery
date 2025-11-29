@@ -168,19 +168,32 @@
     
     let ocrResults: OCRResultItem[] = [];
 
+    // Gesture State
+    let isRightClickDown = false;
+    let gestureStartX = 0;
+    let gestureStartY = 0;
+    let blockContextMenu = false;
+
     function handlePointerDown(e: PointerEvent) {
         if ($isOCRMode) {
             selectionStart = { x: e.clientX, y: e.clientY };
             selectionEnd = { x: e.clientX, y: e.clientY };
-            // Don't clear results on new selection, maybe? Or clear? Let's clear manual selection results but keep auto?
-            // For now, clear all to avoid clutter
             ocrResults = []; 
         } else {
-            isPointerDown = true;
-            lastPointerX = e.clientX;
-            lastPointerY = e.clientY;
-            panStartX = panX;
-            panStartY = panY;
+            if (e.button === 2) {
+                // Right click - Start Gesture
+                isRightClickDown = true;
+                gestureStartX = e.clientX;
+                gestureStartY = e.clientY;
+                blockContextMenu = false; // Reset
+            } else {
+                // Left click (or others) - Pan
+                isPointerDown = true;
+                lastPointerX = e.clientX;
+                lastPointerY = e.clientY;
+                panStartX = panX;
+                panStartY = panY;
+            }
         }
         canvas.setPointerCapture(e.pointerId);
     }
@@ -192,6 +205,11 @@
                 draw();
             }
         } else {
+            if (isRightClickDown) {
+                // We could visualize the gesture here if we wanted
+                return;
+            }
+
             if (!isPointerDown) return;
             
             const dx = e.clientX - lastPointerX;
@@ -222,7 +240,28 @@
                 performOCR(startX, startY, w, h);
             }
         } else {
-            if (isPointerDown) {
+            if (isRightClickDown && e.button === 2) {
+                // Finish Gesture
+                const deltaX = e.clientX - gestureStartX;
+                const deltaY = e.clientY - gestureStartY;
+                const dist = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
+
+                if (dist > 50) {
+                    // It was a drag
+                    blockContextMenu = true;
+                    if (Math.abs(deltaX) > Math.abs(deltaY)) {
+                        // Horizontal Gesture
+                        if (deltaX > 0) {
+                            // Drag Right -> Next Image
+                            executeAction('nextFile');
+                        } else {
+                            // Drag Left -> Prev Image
+                            executeAction('prevFile');
+                        }
+                    }
+                }
+                isRightClickDown = false;
+            } else if (isPointerDown) {
                 // Calculate total pan distance
                 const totalDx = panX - panStartX;
                 const totalDy = panY - panStartY;
@@ -233,8 +272,15 @@
                         value: { x: totalDx, y: totalDy } 
                     });
                 }
+                isPointerDown = false;
             }
-            isPointerDown = false;
+        }
+    }
+
+    function handleContextMenu(e: MouseEvent) {
+        if (blockContextMenu) {
+            e.preventDefault();
+            blockContextMenu = false;
         }
     }
 
@@ -255,6 +301,186 @@
                 }
             }, 500);
         }
+    }
+
+    // Transform screen coordinates to image pixel coordinates
+    function screenToImageCoords(screenX: number, screenY: number): { x: number, y: number } {
+        if (!canvas || (!image && !video)) return { x: 0, y: 0 };
+        
+        const media = image || video;
+        const mediaW = image ? image.width : (video as HTMLVideoElement).videoWidth;
+        const mediaH = image ? image.height : (video as HTMLVideoElement).videoHeight;
+        
+        if (!mediaW || !mediaH) return { x: 0, y: 0 };
+        
+        const width = canvas.width;
+        const height = canvas.height;
+        const isRotated90 = settings.rotation % 180 !== 0;
+        const effectiveW = isRotated90 ? mediaH : mediaW;
+        const effectiveH = isRotated90 ? mediaW : mediaH;
+        
+        let drawW = mediaW;
+        let drawH = mediaH;
+        let offsetX = panX;
+        let offsetY = panY;
+        
+        // Calculate scale based on view mode (same logic as draw())
+        if (settings.viewMode === 'fit-h') {
+            const scale = width / effectiveW;
+            drawW = mediaW * scale;
+            drawH = mediaH * scale;
+            const finalH = isRotated90 ? drawW : drawH;
+            offsetY = panY + (height - finalH) / 2;
+            if (isRotated90) offsetX = panX + (width - drawH) / 2;
+        } else if (settings.viewMode === 'fit-v') {
+            const scale = height / effectiveH;
+            drawW = mediaW * scale;
+            drawH = mediaH * scale;
+            const finalW = isRotated90 ? drawH : drawW;
+            offsetX = panX + (width - finalW) / 2;
+            if (isRotated90) offsetY = panY + (height - drawW) / 2;
+        } else if (settings.viewMode === 'original') {
+            const finalW = isRotated90 ? mediaH : mediaW;
+            const finalH = isRotated90 ? mediaW : mediaH;
+            offsetX = panX + (width - finalW) / 2;
+            offsetY = panY + (height - finalH) / 2;
+        } else if (settings.viewMode === 'reader') {
+            const scale = width / effectiveW;
+            drawW = mediaW * scale;
+            drawH = mediaH * scale;
+            const finalH = isRotated90 ? drawW : drawH;
+            offsetY = -scrollOffset + panY;
+            if (isRotated90) offsetX = panX + (width - drawH) / 2;
+        } else if (settings.viewMode === 'landscape') {
+            const scale = height / effectiveH;
+            drawW = mediaW * scale;
+            drawH = mediaH * scale;
+            offsetX = -scrollOffset + panX;
+            if (isRotated90) offsetY = panY + (height - drawW) / 2;
+        }
+        
+        // Apply zoom
+        drawW *= settings.zoom;
+        drawH *= settings.zoom;
+        
+        if (settings.zoom !== 1) {
+            const centerX = width / 2;
+            const centerY = height / 2;
+            offsetX = centerX - (centerX - offsetX) * settings.zoom;
+            offsetY = centerY - (centerY - offsetY) * settings.zoom;
+        }
+        
+        // Calculate center of drawn image
+        const cx = offsetX + (isRotated90 ? drawH : drawW) / 2;
+        const cy = offsetY + (isRotated90 ? drawW : drawH) / 2;
+        
+        // Translate screen coords relative to image center
+        let relX = screenX - cx;
+        let relY = screenY - cy;
+        
+        // Reverse rotation
+        const rotationRad = (settings.rotation * Math.PI) / 180;
+        const cosA = Math.cos(-rotationRad);
+        const sinA = Math.sin(-rotationRad);
+        const rotatedX = relX * cosA - relY * sinA;
+        const rotatedY = relX * sinA + relY * cosA;
+        
+        // Scale back to original image coords
+        const imgX = rotatedX / drawW * mediaW + mediaW / 2;
+        const imgY = rotatedY / drawH * mediaH + mediaH / 2;
+        
+        return { x: Math.round(imgX), y: Math.round(imgY) };
+    }
+    
+    // Transform image coordinates to screen coordinates
+    function imageToScreenCoords(imgX: number, imgY: number, imgW: number, imgH: number): { x: number, y: number, w: number, h: number } {
+        if (!canvas || (!image && !video)) return { x: 0, y: 0, w: 0, h: 0 };
+        
+        const media = image || video;
+        const mediaW = image ? image.width : (video as HTMLVideoElement).videoWidth;
+        const mediaH = image ? image.height : (video as HTMLVideoElement).videoHeight;
+        
+        if (!mediaW || !mediaH) return { x: 0, y: 0, w: 0, h: 0 };
+        
+        const width = canvas.width;
+        const height = canvas.height;
+        const isRotated90 = settings.rotation % 180 !== 0;
+        const effectiveW = isRotated90 ? mediaH : mediaW;
+        const effectiveH = isRotated90 ? mediaW : mediaH;
+        
+        let drawW = mediaW;
+        let drawH = mediaH;
+        let offsetX = panX;
+        let offsetY = panY;
+        
+        // Same view mode calculations as draw()
+        if (settings.viewMode === 'fit-h') {
+            const scale = width / effectiveW;
+            drawW = mediaW * scale;
+            drawH = mediaH * scale;
+            const finalH = isRotated90 ? drawW : drawH;
+            offsetY = panY + (height - finalH) / 2;
+            if (isRotated90) offsetX = panX + (width - drawH) / 2;
+        } else if (settings.viewMode === 'fit-v') {
+            const scale = height / effectiveH;
+            drawW = mediaW * scale;
+            drawH = mediaH * scale;
+            const finalW = isRotated90 ? drawH : drawW;
+            offsetX = panX + (width - finalW) / 2;
+            if (isRotated90) offsetY = panY + (height - drawW) / 2;
+        } else if (settings.viewMode === 'original') {
+            const finalW = isRotated90 ? mediaH : mediaW;
+            const finalH = isRotated90 ? mediaW : mediaH;
+            offsetX = panX + (width - finalW) / 2;
+            offsetY = panY + (height - finalH) / 2;
+        } else if (settings.viewMode === 'reader') {
+            const scale = width / effectiveW;
+            drawW = mediaW * scale;
+            drawH = mediaH * scale;
+            const finalH = isRotated90 ? drawW : drawH;
+            offsetY = -scrollOffset + panY;
+            if (isRotated90) offsetX = panX + (width - drawH) / 2;
+        } else if (settings.viewMode === 'landscape') {
+            const scale = height / effectiveH;
+            drawW = mediaW * scale;
+            drawH = mediaH * scale;
+            offsetX = -scrollOffset + panX;
+            if (isRotated90) offsetY = panY + (height - drawW) / 2;
+        }
+        
+        // Apply zoom
+        drawW *= settings.zoom;
+        drawH *= settings.zoom;
+        
+        if (settings.zoom !== 1) {
+            const centerX = width / 2;
+            const centerY = height / 2;
+            offsetX = centerX - (centerX - offsetX) * settings.zoom;
+            offsetY = centerY - (centerY - offsetY) * settings.zoom;
+        }
+        
+        // Convert image coords to relative coords
+        const relX = (imgX - mediaW / 2) / mediaW * drawW;
+        const relY = (imgY - mediaH / 2) / mediaH * drawH;
+        const relW = imgW / mediaW * drawW;
+        const relH = imgH / mediaH * drawH;
+        
+        // Apply rotation
+        const rotationRad = (settings.rotation * Math.PI) / 180;
+        const cosA = Math.cos(rotationRad);
+        const sinA = Math.sin(rotationRad);
+        const rotatedX = relX * cosA - relY * sinA;
+        const rotatedY = relX * sinA + relY * cosA;
+        
+        // Calculate center of drawn image
+        const cx = offsetX + (isRotated90 ? drawH : drawW) / 2;
+        const cy = offsetY + (isRotated90 ? drawW : drawH) / 2;
+        
+        // Convert back to screen coords
+        const screenX = rotatedX + cx;
+        const screenY = rotatedY + cy;
+        
+        return { x: Math.round(screenX), y: Math.round(screenY), w: Math.round(relW), h: Math.round(relH) };
     }
 
     function getEdgePosition(edge: 'top' | 'bottom' | 'left' | 'right'): number {
@@ -473,16 +699,38 @@
         }
     }
 
-    async function performOCR(x: number, y: number, w: number, h: number) {
+    async function performOCR(screenX: number, screenY: number, screenW: number, screenH: number) {
+        if (!image && !video) return;
+        
+        // Transform screen coordinates to image coordinates
+        const topLeft = screenToImageCoords(screenX, screenY);
+        const bottomRight = screenToImageCoords(screenX + screenW, screenY + screenH);
+        
+        const imgX = Math.min(topLeft.x, bottomRight.x);
+        const imgY = Math.min(topLeft.y, bottomRight.y);
+        const imgW = Math.abs(bottomRight.x - topLeft.x);
+        const imgH = Math.abs(bottomRight.y - topLeft.y);
+        
+        // Clamp to image bounds
+        const media = image || video;
+        const mediaW = image ? image.width : (video as HTMLVideoElement).videoWidth;
+        const mediaH = image ? image.height : (video as HTMLVideoElement).videoHeight;
+        
+        const clampedX = Math.max(0, Math.min(imgX, mediaW));
+        const clampedY = Math.max(0, Math.min(imgY, mediaH));
+        const clampedW = Math.min(imgW, mediaW - clampedX);
+        const clampedH = Math.min(imgH, mediaH - clampedY);
+        
+        if (clampedW < 10 || clampedH < 10) return;
+        
         // Add placeholder result
-        const resultId = Date.now();
         const newResult: OCRResultItem = {
             text: '',
             translation: '',
-            x: x,
-            y: y,
-            w: w,
-            h: h,
+            x: screenX,
+            y: screenY,
+            w: screenW,
+            h: screenH,
             visible: true,
             loading: true
         };
@@ -491,31 +739,19 @@
         const resultIndex = ocrResults.length - 1;
 
         try {
-            const imageData = ctx!.getImageData(x, y, w, h);
+            // Extract region from original image
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = clampedW;
+            tempCanvas.height = clampedH;
+            const tempCtx = tempCanvas.getContext('2d')!;
+            tempCtx.drawImage(media, clampedX, clampedY, clampedW, clampedH, 0, 0, clampedW, clampedH);
             
             if ($ollamaSettings.useVision) {
-                const tempCanvas = document.createElement('canvas');
-                tempCanvas.width = w;
-                tempCanvas.height = h;
-                const tempCtx = tempCanvas.getContext('2d');
-                tempCtx!.putImageData(imageData, 0, 0);
                 const dataUrl = tempCanvas.toDataURL('image/png');
-                
                 const { recognizeAndTranslateWithVision } = await import('../lib/TranslationService');
                 const result = await recognizeAndTranslateWithVision(dataUrl, $ollamaSettings.targetLanguage);
-                
                 ocrResults[resultIndex] = { ...ocrResults[resultIndex], loading: false, text: result.text, translation: result.translation };
             } else {
-                const tempCanvas = document.createElement('canvas');
-                tempCanvas.width = w;
-                tempCanvas.height = h;
-                const tempCtx = tempCanvas.getContext('2d');
-                tempCtx!.putImageData(imageData, 0, 0);
-
-                // Note: recognizeText now returns OCRBlock[] but for manual selection we might just want the text?
-                // Actually, let's use the first block or join them?
-                // For manual selection, we usually expect one block or we just want the text.
-                // Let's join all text found in the selection.
                 const blocks = await recognizeText(tempCanvas, $ollamaSettings.ocrLanguage);
                 const text = blocks.map(b => b.text).join('\n');
                 
@@ -535,39 +771,39 @@
     }
 
     async function handleAutoOCR() {
-        if (!canvas) return;
+        if (!image && !video) return;
         
         ocrResults = []; // Clear previous
         
-        // 1. Capture full canvas (or visible area?)
-        // Let's do visible area to match what user sees
-        const width = canvas.width;
-        const height = canvas.height;
-        
-        // We need the image data of the canvas
-        // But wait, the canvas has the image drawn on it.
-        // We can just use the canvas itself as source for Tesseract
-        
         try {
-            // Use Tesseract to find text blocks
-            const blocks = await recognizeText(canvas, $ollamaSettings.ocrLanguage);
+            // Use original image for OCR, not transformed canvas
+            const media = image || video;
+            const blocks = await recognizeText(media, $ollamaSettings.ocrLanguage);
             
-            // Create result items for each block
-            ocrResults = blocks.map(block => ({
-                text: block.text,
-                translation: 'Translating...',
-                x: block.bbox.x0,
-                y: block.bbox.y0,
-                w: block.bbox.x1 - block.bbox.x0,
-                h: block.bbox.y1 - block.bbox.y0,
-                visible: true,
-                loading: true
-            }));
+            // Transform each block's bbox from image coords to screen coords
+            ocrResults = blocks.map(block => {
+                const screenCoords = imageToScreenCoords(
+                    block.bbox.x0,
+                    block.bbox.y0,
+                    block.bbox.x1 - block.bbox.x0,
+                    block.bbox.y1 - block.bbox.y0
+                );
+                
+                return {
+                    text: block.text,
+                    translation: 'Translating...',
+                    x: screenCoords.x,
+                    y: screenCoords.y,
+                    w: screenCoords.w,
+                    h: screenCoords.h,
+                    visible: true,
+                    loading: true
+                };
+            });
             
             draw(); // Draw boxes
             
             // Now translate each block
-            // We can do this in parallel
             await Promise.all(ocrResults.map(async (res, i) => {
                 try {
                     const translation = await translateText(res.text);
@@ -785,6 +1021,7 @@
         window.addEventListener('keydown', handleKeydown);
         window.addEventListener('playMacro', handleMacroPlay as EventListener);
         window.addEventListener('triggerAutoOCR', handleAutoOCR);
+        window.addEventListener('contextmenu', handleContextMenu);
     });
 
     onDestroy(() => {
@@ -792,6 +1029,7 @@
         window.removeEventListener('keydown', handleKeydown);
         window.removeEventListener('playMacro', handleMacroPlay as EventListener);
         window.removeEventListener('triggerAutoOCR', handleAutoOCR);
+        window.removeEventListener('contextmenu', handleContextMenu);
         if (scrollFrame) cancelAnimationFrame(scrollFrame);
         if (videoFrame) cancelAnimationFrame(videoFrame);
         if (video) {

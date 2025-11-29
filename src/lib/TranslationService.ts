@@ -6,7 +6,12 @@ export async function translateText(text: string): Promise<string> {
 
     const baseUrl = settings.url.replace(/\/$/, '');
 
-    const prompt = `Translate the following text to ${settings.targetLanguage}. Only output the translated text, no explanations:\n\n${text}`;
+    const prompt = `Translate the following text to ${settings.targetLanguage}. 
+Output valid JSON only: { "translation": "..." }
+Do not output any other text.
+
+Text to translate:
+${text}`;
 
     try {
         const response = await fetch(`${baseUrl}/api/generate`, {
@@ -17,7 +22,8 @@ export async function translateText(text: string): Promise<string> {
             body: JSON.stringify({
                 model: settings.model,
                 prompt: prompt,
-                stream: false
+                stream: false,
+                format: "json" // Request JSON format from Ollama
             }),
         });
 
@@ -26,7 +32,15 @@ export async function translateText(text: string): Promise<string> {
         }
 
         const data = await response.json();
-        return data.response || 'Translation unavailable';
+        const responseText = data.response;
+
+        try {
+            const json = JSON.parse(responseText);
+            return json.translation || responseText;
+        } catch (e) {
+            // Fallback if JSON parsing fails (e.g. model didn't output JSON)
+            return responseText.replace(/^{"translation":\s*"/, '').replace(/"}$/, '').trim();
+        }
     } catch (error) {
         console.error('Translation error:', error);
         return 'Translation failed';
@@ -40,11 +54,13 @@ export async function recognizeAndTranslateWithVision(imageDataUrl: string, targ
     // Extract base64 data from data URL
     const base64Data = imageDataUrl.split(',')[1];
 
-    const prompt = `Please recognize and translate any text in this image to ${targetLanguage}. 
-    
-Output format:
-Original text: [the text you see in the image]
-Translation: [translation to ${targetLanguage}]`;
+    const prompt = `Recognize text in this image and translate it to ${targetLanguage}.
+Output valid JSON only:
+{
+    "original": "text found in image",
+    "translation": "translated text"
+}
+Do not output any other text.`;
 
     try {
         const response = await fetch(`${baseUrl}/api/generate`, {
@@ -56,7 +72,8 @@ Translation: [translation to ${targetLanguage}]`;
                 model: settings.model,
                 prompt: prompt,
                 images: [base64Data],
-                stream: false
+                stream: false,
+                format: "json" // Request JSON format
             }),
         });
 
@@ -67,17 +84,22 @@ Translation: [translation to ${targetLanguage}]`;
         const data = await response.json();
         const responseText = data.response || 'No response';
 
-        // Parse the response to extract original text and translation
-        const originalMatch = responseText.match(/Original text:\s*(.+?)(?=\n|Translation:|$)/i);
-        const translationMatch = responseText.match(/Translation:\s*(.+?)$/i);
+        try {
+            const json = JSON.parse(responseText);
+            return {
+                text: json.original || 'No text found',
+                translation: json.translation || 'Translation unavailable'
+            };
+        } catch (e) {
+            // Fallback to regex parsing if JSON fails
+            const originalMatch = responseText.match(/"original":\s*"(.+?)"/i);
+            const translationMatch = responseText.match(/"translation":\s*"(.+?)"/i);
 
-        const originalText = originalMatch ? originalMatch[1].trim() : responseText;
-        const translation = translationMatch ? translationMatch[1].trim() : responseText;
-
-        return {
-            text: originalText,
-            translation: translation
-        };
+            return {
+                text: originalMatch ? originalMatch[1] : responseText,
+                translation: translationMatch ? translationMatch[1] : 'Parsing failed'
+            };
+        }
     } catch (error) {
         console.error('Vision translation error:', error);
         return {
