@@ -1,47 +1,55 @@
-# Svelte + TS + Vite
+## Gallery app
 
-This template should help get you started developing with Svelte and TypeScript in Vite.
+Gallery app is a modern, high-performance desktop gallery application for Windows, developed using Svelte, TypeScript, and Tauri. It provides not only basic media file viewing but also powerful tools for controlling video playback, image editing, and innovative OCR and translation features that run entirely locally thanks to Ollama.
 
-## Recommended IDE Setup
+## Key Features
 
-[VS Code](https://code.visualstudio.com/) + [Svelte](https://marketplace.visualstudio.com/items?itemName=svelte.svelte-vscode).
+Gallery app transforms ordinary media viewing into a powerful and customizable experience:
 
-## Need an official Svelte framework?
+### Media Viewing
 
-Check out [SvelteKit](https://github.com/sveltejs/kit#readme), which is also powered by Vite. Deploy anywhere with its serverless-first approach and adapt to various platforms, with out of the box support for TypeScript, SCSS, and Less, and easily-added support for mdsvex, GraphQL, PostCSS, Tailwind CSS, and more.
+Universal Viewing: Supports images (JPEG, PNG, WEBP, etc.) and videos (MP4, MKV, etc.).
 
-## Technical considerations
+### Color Control:
 
-**Why use this over SvelteKit?**
+Smooth real-time adjustment of color properties for images and videos (brightness, contrast, saturation, hue).
 
-- It brings its own routing solution which might not be preferable for some users.
-- It is first and foremost a framework that just happens to use Vite under the hood, not a Vite app.
+### Flexible Video Control:
 
-This template contains as little as possible to get started with Vite + TypeScript + Svelte, while taking into account the developer experience with regards to HMR and intellisense. It demonstrates capabilities on par with the other `create-vite` templates and is a good starting point for beginners dipping their toes into a Vite + Svelte project.
+Playback Speed: Speed adjustment from standard up to 4x for detailed analysis or accelerated viewing.
 
-Should you later need the extended capabilities and extensibility provided by SvelteKit, the template has been structured similarly to SvelteKit so that it is easy to migrate.
+Extreme Volume: Audio amplification up to 600% for working with quiet soundtracks.
 
-**Why `global.d.ts` instead of `compilerOptions.types` inside `jsconfig.json` or `tsconfig.json`?**
+## Local AI Features (Powered by Ollama)
 
-Setting `compilerOptions.types` shuts out all other types not explicitly listed in the configuration. Using triple-slash references keeps the default TypeScript setting of accepting type information from the entire workspace, while also adding `svelte` and `vite/client` type information.
+Integration with the local Ollama model ensures data privacy and processing speed:
 
-**Why include `.vscode/extensions.json`?**
+Built-in OCR (Optical Character Recognition): Instant recognition of text in any image or video frame.
 
-Other templates indirectly recommend extensions via the README, but this file allows VS Code to prompt the user to install the recommended extension upon opening the project.
+Contextual Translation: On-the-fly translation of recognized text, operating without the need to send data to remote servers.
 
-**Why enable `allowJs` in the TS template?**
+## Macros and Automation
 
-While `allowJs: false` would indeed prevent the use of `.js` files in the project, it does not prevent the use of JavaScript syntax in `.svelte` files. In addition, it would force `checkJs: false`, bringing the worst of both worlds: not being able to guarantee the entire codebase is TypeScript, and also having worse typechecking for the existing JavaScript. In addition, there are valid use cases in which a mixed codebase may be relevant.
+Macro Recorder: Recording sequences of user actions (key presses, data input) to automate repetitive tasks within the application.
 
-**Why is HMR not preserving my local component state?**
+Custom Keybindings: Assigning recorded macros to custom hotkeys for quick access to complex features or settings.
 
-HMR state preservation comes with a number of gotchas! It has been disabled by default in both `svelte-hmr` and `@sveltejs/vite-plugin-svelte` due to its often surprising behavior. You can read the details [here](https://github.com/rixo/svelte-hmr#svelte-hmr).
+## Using AI Features
 
-If you have state that's important to retain within a component, consider creating an external store which would not be replaced by HMR.
+View Media: Open any image or video in the application.
 
-```ts
-// store.ts
-// An extremely simple external store
-import { writable } from 'svelte/store'
-export default writable(0)
-```
+Run OCR: Press the "Recognize Text" button (or the configured macro hotkey).
+
+### Translate: Select the recognized text, press "Translate," and Ollama will perform the local translation, displaying the result.
+
+Note: Ensure your local Ollama server is running before using these features.
+
+### Macros (Keybindings & Recorder)
+
+The "Settings" > "Macros" section allows you to:
+
+Click "Record" and perform a sequence of actions (e.g., increase speed, apply filter, run OCR).
+
+Click "Stop" and save the macro with a name.
+
+Assign a key combination for instant execution of the recorded macro.
