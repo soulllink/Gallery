@@ -10,7 +10,11 @@
     }
 
     function setViewMode(mode: 'original' | 'fit-h' | 'fit-v' | 'reader' | 'landscape') {
-        viewSettings.update(v => ({ ...v, viewMode: mode }));
+        viewSettings.update(v => ({ 
+            ...v, 
+            viewMode: mode,
+            zoom: (mode === 'fit-h' || mode === 'fit-v') ? 1 : v.zoom 
+        }));
     }
 
     let gotoInput = '';
@@ -89,13 +93,27 @@
             <MacroRecorder />
             
             <!-- OCR Toggle -->
-            <button class="icon-btn {$isOCRMode ? 'active' : ''}" on:click={() => isOCRMode.update(v => !v)} title="OCR / Translate">
+            <button 
+                class="icon-btn {$isOCRMode ? 'active' : ''}" 
+                on:click={(e) => {
+                    if (e.shiftKey) {
+                        isOCRMode.update(v => !v);
+                    } else {
+                        // Trigger Auto OCR
+                        window.dispatchEvent(new CustomEvent('triggerAutoOCR'));
+                    }
+                }} 
+                title="OCR / Translate (Click: Auto, Shift+Click: Manual)"
+            >
                 <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
             </button>
 
             <!-- Settings Cog -->
             <button class="icon-btn" on:click={openSettings} title="Settings">
-                <img src="/src/assets/cog.svg" alt="Settings" width="20" height="20" />
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="3"></circle>
+                    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                </svg>
             </button>
             
             <!-- Hide UI Button -->
@@ -225,10 +243,11 @@
         margin: 0 auto 20px;
         display: flex;
         flex-direction: row;
-        gap: 25px;
+        gap: 15px;
         justify-content: center;
         align-items: center;
-        padding: 15px 30px;
+        padding: 10px 20px;
+        flex-wrap: wrap;
     }
     
     .slider-group {
@@ -266,7 +285,7 @@
         border-radius: 999px;
         transition: height 0.1s;
         cursor: pointer;
-        margin-left: 15px;
+        margin-left: 10px;
     }
 
     input[type="range"]::-webkit-slider-thumb {

@@ -1,6 +1,6 @@
 <script lang="ts">
     import { onMount, onDestroy } from 'svelte';
-    import { files, currentFileIndex, viewSettings, keybindings, isRecording, recordedActions, macroSlots, isOCRMode, ollamaSettings } from '../stores';
+    import { files, currentFileIndex, viewSettings, keybindings, isRecording, recordedActions, macroSlots, isOCRMode, ollamaSettings, isUIVisible } from '../stores';
     import { getFileUrl } from '../lib/fileSystem';
     import { recognizeText } from '../lib/OCRService';
     import { translateText } from '../lib/TranslationService';
@@ -143,21 +143,44 @@
     let isPointerDown = false;
     let lastPointerX = 0;
     let lastPointerY = 0;
+    let panStartX = 0;
+    let panStartY = 0;
+    
+    // Zoom recording
+    let zoomDebounceTimer: number;
+    let accumulatedZoomDelta = 0;
     
     // OCR Selection
     let selectionStart: { x: number, y: number } | null = null;
     let selectionEnd: { x: number, y: number } | null = null;
-    let ocrResult: { text: string, translation: string, x: number, y: number, visible: boolean, loading: boolean } | null = null;
+
+    
+    interface OCRResultItem {
+        text: string;
+        translation: string;
+        x: number;
+        y: number;
+        w: number;
+        h: number;
+        visible: boolean;
+        loading: boolean;
+    }
+    
+    let ocrResults: OCRResultItem[] = [];
 
     function handlePointerDown(e: PointerEvent) {
         if ($isOCRMode) {
             selectionStart = { x: e.clientX, y: e.clientY };
             selectionEnd = { x: e.clientX, y: e.clientY };
-            ocrResult = null; // Clear previous result
+            // Don't clear results on new selection, maybe? Or clear? Let's clear manual selection results but keep auto?
+            // For now, clear all to avoid clutter
+            ocrResults = []; 
         } else {
             isPointerDown = true;
             lastPointerX = e.clientX;
             lastPointerY = e.clientY;
+            panStartX = panX;
+            panStartY = panY;
         }
         canvas.setPointerCapture(e.pointerId);
     }
@@ -196,67 +219,21 @@
             draw(); // Clear selection box
 
             if (w > 10 && h > 10) {
-                // Perform OCR
-                ocrResult = { 
-                    text: '', 
-                    translation: '', 
-                    x: startX, 
-                    y: startY + h + 10, 
-                    visible: true, 
-                    loading: true 
-                };
-
-                try {
-                    // Get image data from canvas
-                    const imageData = ctx!.getImageData(startX, startY, w, h);
-                    
-                    // Check if using vision model
-                    if ($ollamaSettings.useVision) {
-                        // Create a temporary canvas to get data URL
-                        const tempCanvas = document.createElement('canvas');
-                        tempCanvas.width = w;
-                        tempCanvas.height = h;
-                        const tempCtx = tempCanvas.getContext('2d');
-                        tempCtx!.putImageData(imageData, 0, 0);
-                        
-                        // Get as data URL
-                        const dataUrl = tempCanvas.toDataURL('image/png');
-                        
-                        // Use vision model for recognition and translation
-                        const { recognizeAndTranslateWithVision } = await import('../lib/TranslationService');
-                        const result = await recognizeAndTranslateWithVision(dataUrl, $ollamaSettings.targetLanguage);
-                        
-                        ocrResult = { 
-                            ...ocrResult, 
-                            loading: false, 
-                            text: result.text, 
-                            translation: result.translation 
-                        };
-                    } else {
-                        // Traditional OCR + Translation path
-                        const tempCanvas = document.createElement('canvas');
-                        tempCanvas.width = w;
-                        tempCanvas.height = h;
-                        const tempCtx = tempCanvas.getContext('2d');
-                        tempCtx!.putImageData(imageData, 0, 0);
-
-                        const text = await recognizeText(tempCanvas, $ollamaSettings.ocrLanguage);
-                        if (!text.trim()) {
-                            ocrResult = { ...ocrResult, loading: false, text: 'No text found', translation: '' };
-                            return;
-                        }
-
-                        ocrResult = { ...ocrResult, text: text.trim() };
-                        
-                        const translation = await translateText(text);
-                        ocrResult = { ...ocrResult, loading: false, translation };
-                    }
-                } catch (err) {
-                    console.error(err);
-                    ocrResult = { ...ocrResult, loading: false, text: 'Error', translation: 'Failed to process' };
-                }
+                performOCR(startX, startY, w, h);
             }
         } else {
+            if (isPointerDown) {
+                // Calculate total pan distance
+                const totalDx = panX - panStartX;
+                const totalDy = panY - panStartY;
+                
+                if (Math.abs(totalDx) > 1 || Math.abs(totalDy) > 1) {
+                    recordAction({ 
+                        type: 'pan', 
+                        value: { x: totalDx, y: totalDy } 
+                    });
+                }
+            }
             isPointerDown = false;
         }
     }
@@ -266,6 +243,18 @@
         const zoomDelta = -e.deltaY * 0.001;
         const newZoom = Math.max(0.1, Math.min(5, settings.zoom + zoomDelta));
         viewSettings.update(v => ({ ...v, zoom: newZoom }));
+        
+        // Record zoom
+        if ($isRecording) {
+            accumulatedZoomDelta += zoomDelta;
+            clearTimeout(zoomDebounceTimer);
+            zoomDebounceTimer = window.setTimeout(() => {
+                if (Math.abs(accumulatedZoomDelta) > 0.001) {
+                    recordAction({ type: 'zoom', value: accumulatedZoomDelta });
+                    accumulatedZoomDelta = 0;
+                }
+            }, 500);
+        }
     }
 
     function getEdgePosition(edge: 'top' | 'bottom' | 'left' | 'right'): number {
@@ -468,6 +457,129 @@
             ctx.fillStyle = 'rgba(0, 255, 0, 0.2)';
             ctx.fillRect(x, y, w, h);
         }
+
+        // Draw OCR Result Boxes
+        if (ocrResults.length > 0) {
+            ctx.strokeStyle = '#00ffff';
+            ctx.lineWidth = 2;
+            ctx.fillStyle = 'rgba(0, 255, 255, 0.1)';
+            
+            for (const res of ocrResults) {
+                if (res.visible) {
+                    ctx.strokeRect(res.x, res.y, res.w, res.h);
+                    ctx.fillRect(res.x, res.y, res.w, res.h);
+                }
+            }
+        }
+    }
+
+    async function performOCR(x: number, y: number, w: number, h: number) {
+        // Add placeholder result
+        const resultId = Date.now();
+        const newResult: OCRResultItem = {
+            text: '',
+            translation: '',
+            x: x,
+            y: y,
+            w: w,
+            h: h,
+            visible: true,
+            loading: true
+        };
+        
+        ocrResults = [...ocrResults, newResult];
+        const resultIndex = ocrResults.length - 1;
+
+        try {
+            const imageData = ctx!.getImageData(x, y, w, h);
+            
+            if ($ollamaSettings.useVision) {
+                const tempCanvas = document.createElement('canvas');
+                tempCanvas.width = w;
+                tempCanvas.height = h;
+                const tempCtx = tempCanvas.getContext('2d');
+                tempCtx!.putImageData(imageData, 0, 0);
+                const dataUrl = tempCanvas.toDataURL('image/png');
+                
+                const { recognizeAndTranslateWithVision } = await import('../lib/TranslationService');
+                const result = await recognizeAndTranslateWithVision(dataUrl, $ollamaSettings.targetLanguage);
+                
+                ocrResults[resultIndex] = { ...ocrResults[resultIndex], loading: false, text: result.text, translation: result.translation };
+            } else {
+                const tempCanvas = document.createElement('canvas');
+                tempCanvas.width = w;
+                tempCanvas.height = h;
+                const tempCtx = tempCanvas.getContext('2d');
+                tempCtx!.putImageData(imageData, 0, 0);
+
+                // Note: recognizeText now returns OCRBlock[] but for manual selection we might just want the text?
+                // Actually, let's use the first block or join them?
+                // For manual selection, we usually expect one block or we just want the text.
+                // Let's join all text found in the selection.
+                const blocks = await recognizeText(tempCanvas, $ollamaSettings.ocrLanguage);
+                const text = blocks.map(b => b.text).join('\n');
+                
+                if (!text.trim()) {
+                    ocrResults[resultIndex] = { ...ocrResults[resultIndex], loading: false, text: 'No text found', translation: '' };
+                    return;
+                }
+
+                ocrResults[resultIndex] = { ...ocrResults[resultIndex], text: text.trim() };
+                const translation = await translateText(text);
+                ocrResults[resultIndex] = { ...ocrResults[resultIndex], loading: false, translation };
+            }
+        } catch (err) {
+            console.error(err);
+            ocrResults[resultIndex] = { ...ocrResults[resultIndex], loading: false, text: 'Error', translation: 'Failed' };
+        }
+    }
+
+    async function handleAutoOCR() {
+        if (!canvas) return;
+        
+        ocrResults = []; // Clear previous
+        
+        // 1. Capture full canvas (or visible area?)
+        // Let's do visible area to match what user sees
+        const width = canvas.width;
+        const height = canvas.height;
+        
+        // We need the image data of the canvas
+        // But wait, the canvas has the image drawn on it.
+        // We can just use the canvas itself as source for Tesseract
+        
+        try {
+            // Use Tesseract to find text blocks
+            const blocks = await recognizeText(canvas, $ollamaSettings.ocrLanguage);
+            
+            // Create result items for each block
+            ocrResults = blocks.map(block => ({
+                text: block.text,
+                translation: 'Translating...',
+                x: block.bbox.x0,
+                y: block.bbox.y0,
+                w: block.bbox.x1 - block.bbox.x0,
+                h: block.bbox.y1 - block.bbox.y0,
+                visible: true,
+                loading: true
+            }));
+            
+            draw(); // Draw boxes
+            
+            // Now translate each block
+            // We can do this in parallel
+            await Promise.all(ocrResults.map(async (res, i) => {
+                try {
+                    const translation = await translateText(res.text);
+                    ocrResults[i] = { ...ocrResults[i], loading: false, translation };
+                } catch (e) {
+                    ocrResults[i] = { ...ocrResults[i], loading: false, translation: 'Failed' };
+                }
+            }));
+            
+        } catch (e) {
+            console.error("Auto OCR Failed", e);
+        }
     }
 
     let resizeTimeout: number;
@@ -543,6 +655,9 @@
                 break;
             case 'stopScroll':
                 stopAutoScroll();
+                break;
+            case 'toggleUI':
+                isUIVisible.update(v => !v);
                 break;
         }
     }
@@ -635,7 +750,11 @@
                     draw();
                     break;
                 case 'viewMode':
-                    viewSettings.update(v => ({ ...v, viewMode: action.value }));
+                    viewSettings.update(v => ({ 
+                        ...v, 
+                        viewMode: action.value,
+                        zoom: (action.value === 'fit-h' || action.value === 'fit-v') ? 1 : v.zoom
+                    }));
                     break;
                 case 'zoom':
                     viewSettings.update(v => ({ ...v, zoom: Math.max(0.1, Math.min(5, v.zoom + action.value)) }));
@@ -665,12 +784,14 @@
         window.addEventListener('resize', handleResize);
         window.addEventListener('keydown', handleKeydown);
         window.addEventListener('playMacro', handleMacroPlay as EventListener);
+        window.addEventListener('triggerAutoOCR', handleAutoOCR);
     });
 
     onDestroy(() => {
         window.removeEventListener('resize', handleResize);
         window.removeEventListener('keydown', handleKeydown);
         window.removeEventListener('playMacro', handleMacroPlay as EventListener);
+        window.removeEventListener('triggerAutoOCR', handleAutoOCR);
         if (scrollFrame) cancelAnimationFrame(scrollFrame);
         if (videoFrame) cancelAnimationFrame(videoFrame);
         if (video) {
@@ -692,21 +813,28 @@
     on:wheel={handleWheel}
 ></canvas>
 
-{#if ocrResult && ocrResult.visible}
-    <div 
-        class="ocr-tooltip" 
-        style="top: {ocrResult.y}px; left: {ocrResult.x}px;"
-    >
-        {#if ocrResult.loading}
-            <div class="loading">Processing...</div>
-        {:else}
-            <div class="original-text">{ocrResult.text}</div>
-            <div class="divider"></div>
-            <div class="translated-text">{ocrResult.translation}</div>
-        {/if}
-        <button class="close-tooltip" on:click={() => ocrResult = null}>×</button>
-    </div>
-{/if}
+{#each ocrResults as res, i}
+    {#if res.visible}
+        <div 
+            class="ocr-tooltip" 
+            style="top: {res.y + res.h + 10}px; left: {res.x}px;"
+        >
+            {#if res.loading}
+                <div class="loading">Processing...</div>
+            {:else}
+                <div class="original-text">{res.text}</div>
+                <div class="divider"></div>
+                <div class="translated-text">{res.translation}</div>
+            {/if}
+            <button class="close-tooltip" on:click={() => {
+                const newResults = [...ocrResults];
+                newResults.splice(i, 1);
+                ocrResults = newResults;
+                draw();
+            }}>×</button>
+        </div>
+    {/if}
+{/each}
 
 <style>
     .main-canvas {

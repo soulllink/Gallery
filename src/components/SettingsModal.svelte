@@ -3,6 +3,7 @@
     import type { KeyBinding } from '../stores';
 
     let editingIndex = -1;
+    let editingMacroIndex = -1;
     let captureMode = false;
 
     function handleKeyCapture(e: KeyboardEvent, index: number) {
@@ -10,23 +11,39 @@
         e.preventDefault();
         
         const key = e.key;
-        keybindings.update(bindings => {
-            bindings[index] = {
-                ...bindings[index],
-                key,
-                ctrl: e.ctrlKey,
-                shift: e.shiftKey,
-                alt: e.altKey
-            };
-            return bindings;
-        });
+        
+        if (editingIndex >= 0) {
+            keybindings.update(bindings => {
+                bindings[index] = {
+                    ...bindings[index],
+                    key,
+                    ctrl: e.ctrlKey,
+                    shift: e.shiftKey,
+                    alt: e.altKey
+                };
+                return bindings;
+            });
+            editingIndex = -1;
+        } else if (editingMacroIndex >= 0) {
+             macroSlots.update(slots => {
+                slots[editingMacroIndex].keyBinding = key;
+                return slots;
+            });
+            editingMacroIndex = -1;
+        }
         
         captureMode = false;
-        editingIndex = -1;
     }
 
     function startCapture(index: number) {
         editingIndex = index;
+        editingMacroIndex = -1;
+        captureMode = true;
+    }
+
+    function startMacroCapture(index: number) {
+        editingMacroIndex = index;
+        editingIndex = -1;
         captureMode = true;
     }
 
@@ -91,7 +108,7 @@
     ];
 </script>
 
-<svelte:window on:keydown={(e) => editingIndex >= 0 && handleKeyCapture(e, editingIndex)} />
+<svelte:window on:keydown={(e) => (editingIndex >= 0 || editingMacroIndex >= 0) && handleKeyCapture(e, editingIndex >= 0 ? editingIndex : editingMacroIndex)} />
 
 {#if $isSettingsOpen}
     <div class="settings-overlay" on:click={closeSettings}>
@@ -131,7 +148,13 @@
                                     placeholder="Macro {i + 1}"
                                     class="macro-name-input"
                                 />
-                                <span class="macro-key">{slot.keyBinding || '-'}</span>
+                                <button 
+                                    class="key-button {editingMacroIndex === i ? 'editing' : ''}"
+                                    on:click={() => startMacroCapture(i)}
+                                    title="Click to assign key"
+                                >
+                                    {editingMacroIndex === i ? 'Press key...' : (slot.keyBinding || 'None')}
+                                </button>
                                 <span class="macro-actions">{slot.actions.length} actions</span>
                             </div>
                         {/each}
