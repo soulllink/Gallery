@@ -35,13 +35,13 @@ export interface KeyBinding {
 
 export interface MacroAction {
   type:
-    | "navigate"
-    | "zoom"
-    | "pan"
-    | "wait"
-    | "viewMode"
-    | "videoSpeed"
-    | "rotation";
+  | "navigate"
+  | "zoom"
+  | "pan"
+  | "wait"
+  | "viewMode"
+  | "videoSpeed"
+  | "rotation";
   value?: any;
   timestamp?: number;
 }
@@ -92,9 +92,9 @@ export const viewSettings = writable<ViewSettings>({
 
 export const ollamaSettings = writable<OllamaSettings>({
   url: "http://localhost:11434",
-  model: "granite4:tiny-h",
+  model: "qwen3-vl:8b",
   targetLanguage: "English",
-  ocrLanguage: "eng",
+  ocrLanguage: "jpn",
   useVision: false,
 });
 

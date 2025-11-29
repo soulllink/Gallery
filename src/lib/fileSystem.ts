@@ -220,22 +220,26 @@ export async function getFileUrl(fileItem: FileItem): Promise<string> {
 
   // 1. Handle Tauri Path (Desktop)
   if (fileItem.path && isTauri()) {
+    // For VIDEO files: Use convertFileSrc directly for streaming support
+    // Tauri's asset protocol supports HTTP range requests natively
+    if (fileItem.type === "video") {
+      const url = convertFileSrc(fileItem.path);
+      fileItem.url = url;
+      return url;
+    }
+
+    // For IMAGE files: Keep blob approach for compatibility
     try {
-      // Read the file directly into memory (Bypasses Asset Server scope/encoding issues)
       const bytes = await readFile(fileItem.path);
       const blob = new Blob([bytes], {
-        // Set correct mime type based on file extension
-        type:
-          fileItem.type === "video"
-            ? getMimeType(fileItem.name)
-            : getImageMimeType(fileItem.name),
+        type: getImageMimeType(fileItem.name),
       });
       const url = URL.createObjectURL(blob);
       fileItem.url = url;
       return url;
     } catch (e) {
       console.error("Failed to load file blob:", fileItem.path, e);
-      // Fallback to asset protocol if blob fails (e.g. file too big)
+      // Fallback to asset protocol if blob fails
       const url = convertFileSrc(fileItem.path);
       fileItem.url = url;
       return url;
@@ -245,6 +249,7 @@ export async function getFileUrl(fileItem: FileItem): Promise<string> {
   // 2. Handle Web FileHandle (Browser)
   if (fileItem.handle) {
     const file = await fileItem.handle.getFile();
+    // For both images and videos, createObjectURL works with streaming
     const url = URL.createObjectURL(file);
     fileItem.url = url;
     return url;

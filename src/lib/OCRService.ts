@@ -61,7 +61,12 @@ function preprocessImage(source: HTMLCanvasElement | HTMLImageElement): Promise<
     });
 }
 
-export async function recognizeText(source: HTMLCanvasElement | HTMLImageElement, lang: string = 'eng'): Promise<OCRBlock[]> {
+/**
+ * Detect text regions using Tesseract OCR
+ * This function only finds where text is located, not the actual text content
+ * Use OllamaOCRService for actual text recognition and translation
+ */
+export async function detectTextRegions(source: HTMLCanvasElement | HTMLImageElement, lang: string = 'jpn'): Promise<OCRBlock[]> {
     // Preprocess image for better OCR
     const preprocessedImage = await preprocessImage(source);
 
@@ -74,6 +79,7 @@ export async function recognizeText(source: HTMLCanvasElement | HTMLImageElement
     const blocks: OCRBlock[] = [];
 
     if (data.blocks) {
+        console.log("Tesseract OCR Raw Blocks:", data.blocks.map(b => ({ text: b.text, bbox: b.bbox, confidence: b.confidence })));
         for (const block of data.blocks) {
             if (block.text && block.text.trim()) {
                 blocks.push({
@@ -90,4 +96,24 @@ export async function recognizeText(source: HTMLCanvasElement | HTMLImageElement
     }
 
     return blocks;
+}
+
+/**
+ * Alias for detectTextRegions - for backward compatibility
+ * Handles HTMLVideoElement by converting to canvas first
+ */
+export async function recognizeText(source: HTMLCanvasElement | HTMLImageElement | HTMLVideoElement, lang: string = 'jpn'): Promise<OCRBlock[]> {
+    // If it's a video, draw current frame to a canvas first
+    if (source instanceof HTMLVideoElement) {
+        const canvas = document.createElement('canvas');
+        canvas.width = source.videoWidth;
+        canvas.height = source.videoHeight;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+            ctx.drawImage(source, 0, 0);
+        }
+        return detectTextRegions(canvas, lang);
+    }
+
+    return detectTextRegions(source, lang);
 }

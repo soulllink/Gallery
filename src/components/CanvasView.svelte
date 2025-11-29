@@ -3,11 +3,14 @@
     import { files, currentFileIndex, viewSettings, keybindings, isRecording, recordedActions, macroSlots, isOCRMode, ollamaSettings, isUIVisible } from '../stores';
     import { getFileUrl } from '../lib/fileSystem';
     import { recognizeText } from '../lib/OCRService';
-    import { translateText } from '../lib/TranslationService';
+    import { translateText, recognizeAndTranslateWithVision } from '../lib/TranslationService';
+    import { screenToImageCoords, imageToScreenCoords, getEdgePosition, type TransformParams } from '../lib/CoordinateTransforms';
     import type { FileItem, MacroAction } from '../stores';
+    import CanvasRenderer from './CanvasRenderer.svelte';
+    import OCRPanel from './OCRPanel.svelte';
 
     let canvas: HTMLCanvasElement;
-    let ctx: CanvasRenderingContext2D | null;
+    let canvasRenderer: CanvasRenderer;
     let image: HTMLImageElement | null = null;
     let video: HTMLVideoElement | null = null;
     let videoFrame: number | null = null;
@@ -16,6 +19,7 @@
     let scrollOffset = 0;
     let lastTimestamp = 0;
     let isScrolling = false;
+    let resizeTimeout: number;
 
     // Pan state
     let panX = 0;
@@ -31,7 +35,7 @@
             video.playbackRate = settings.videoSpeed;
             video.volume = Math.min(settings.volume / 100, 6);
         }
-        draw();
+        canvasRenderer?.draw();
     }
 
     $: if (fileItem) {
@@ -39,7 +43,7 @@
     }
 
     $: if (image || video) {
-        draw();
+        canvasRenderer?.draw();
     }
 
     let previousFileItem: FileItem | null = null;
@@ -71,14 +75,12 @@
         scrollOffset = 0;
         panX = 0;
         panY = 0;
-        // Reset rotation on new file? Maybe keep it? User might want to keep rotation.
-        // Let's keep it for now as per "view settings" persistence.
 
         if (item.type === 'image') {
             video = null;
             image = new Image();
             image.onload = () => {
-                draw();
+                canvasRenderer?.draw();
                 if (settings.viewMode === 'reader' || settings.viewMode === 'landscape') {
                     startAutoScroll();
                 }
@@ -92,10 +94,10 @@
             video = document.createElement('video');
             video.src = currentUrl;
             video.loop = true;
-            video.muted = false; // Enable sound
-            video.volume = Math.min(settings.volume / 100, 6); // 0-600% mapped to 0-6 (max browser allows)
+            video.muted = false;
+            video.volume = Math.min(settings.volume / 100, 6);
             video.onloadeddata = () => {
-                draw();
+                canvasRenderer?.draw();
                 startVideoLoop();
             };
             video.onerror = (e) => {
@@ -108,7 +110,7 @@
     function startVideoLoop() {
         if (!video) return;
         function loop() {
-            draw();
+            canvasRenderer?.draw();
             videoFrame = requestAnimationFrame(loop);
         }
         loop();
@@ -135,7 +137,7 @@
         lastTimestamp = timestamp;
         const speed = 30;
         scrollOffset += (speed * delta) / 1000;
-        draw();
+        canvasRenderer?.draw();
         scrollFrame = requestAnimationFrame(stepAutoScroll);
     }
 
@@ -167,6 +169,31 @@
     }
     
     let ocrResults: OCRResultItem[] = [];
+    
+    $: tooltipResults = ocrResults.map(res => {
+        if (!image && !video) return res;
+        
+        const params: TransformParams = {
+            mediaW: image ? image.width : (video ? video.videoWidth : 0),
+            mediaH: image ? image.height : (video ? video.videoHeight : 0),
+            settings: settings,
+            panX: panX,
+            panY: panY,
+            scrollOffset: scrollOffset,
+            windowWidth: window.innerWidth,
+            windowHeight: window.innerHeight,
+            canvas: canvas
+        };
+        
+        const screenCoords = imageToScreenCoords(res.x, res.y, res.w, res.h, params);
+        return {
+            ...res,
+            x: screenCoords.x,
+            y: screenCoords.y,
+            w: screenCoords.w,
+            h: screenCoords.h
+        };
+    });
 
     // Gesture State
     let isRightClickDown = false;
@@ -202,7 +229,7 @@
         if ($isOCRMode) {
             if (selectionStart) {
                 selectionEnd = { x: e.clientX, y: e.clientY };
-                draw();
+                canvasRenderer?.draw();
             }
         } else {
             if (isRightClickDown) {
@@ -219,7 +246,7 @@
 
             panX += dx;
             panY += dy;
-            draw();
+            canvasRenderer?.draw();
         }
     }
 
@@ -234,7 +261,7 @@
 
             selectionStart = null;
             selectionEnd = null;
-            draw(); // Clear selection box
+            canvasRenderer?.draw(); // Clear selection box
 
             if (w > 10 && h > 10) {
                 performOCR(startX, startY, w, h);
@@ -292,536 +319,11 @@
         
         // Record zoom
         if ($isRecording) {
-            accumulatedZoomDelta += zoomDelta;
-            clearTimeout(zoomDebounceTimer);
-            zoomDebounceTimer = window.setTimeout(() => {
-                if (Math.abs(accumulatedZoomDelta) > 0.001) {
-                    recordAction({ type: 'zoom', value: accumulatedZoomDelta });
-                    accumulatedZoomDelta = 0;
-                }
-            }, 500);
-        }
-    }
-
-    // Transform screen coordinates to image pixel coordinates
-    function screenToImageCoords(screenX: number, screenY: number): { x: number, y: number } {
-        if (!canvas || (!image && !video)) return { x: 0, y: 0 };
-        
-        const media = image || video;
-        const mediaW = image ? image.width : (video as HTMLVideoElement).videoWidth;
-        const mediaH = image ? image.height : (video as HTMLVideoElement).videoHeight;
-        
-        if (!mediaW || !mediaH) return { x: 0, y: 0 };
-        
-        const width = canvas.width;
-        const height = canvas.height;
-        const isRotated90 = settings.rotation % 180 !== 0;
-        const effectiveW = isRotated90 ? mediaH : mediaW;
-        const effectiveH = isRotated90 ? mediaW : mediaH;
-        
-        let drawW = mediaW;
-        let drawH = mediaH;
-        let offsetX = panX;
-        let offsetY = panY;
-        
-        // Calculate scale based on view mode (same logic as draw())
-        if (settings.viewMode === 'fit-h') {
-            const scale = width / effectiveW;
-            drawW = mediaW * scale;
-            drawH = mediaH * scale;
-            const finalH = isRotated90 ? drawW : drawH;
-            offsetY = panY + (height - finalH) / 2;
-            if (isRotated90) offsetX = panX + (width - drawH) / 2;
-        } else if (settings.viewMode === 'fit-v') {
-            const scale = height / effectiveH;
-            drawW = mediaW * scale;
-            drawH = mediaH * scale;
-            const finalW = isRotated90 ? drawH : drawW;
-            offsetX = panX + (width - finalW) / 2;
-            if (isRotated90) offsetY = panY + (height - drawW) / 2;
-        } else if (settings.viewMode === 'original') {
-            const finalW = isRotated90 ? mediaH : mediaW;
-            const finalH = isRotated90 ? mediaW : mediaH;
-            offsetX = panX + (width - finalW) / 2;
-            offsetY = panY + (height - finalH) / 2;
-        } else if (settings.viewMode === 'reader') {
-            const scale = width / effectiveW;
-            drawW = mediaW * scale;
-            drawH = mediaH * scale;
-            const finalH = isRotated90 ? drawW : drawH;
-            offsetY = -scrollOffset + panY;
-            if (isRotated90) offsetX = panX + (width - drawH) / 2;
-        } else if (settings.viewMode === 'landscape') {
-            const scale = height / effectiveH;
-            drawW = mediaW * scale;
-            drawH = mediaH * scale;
-            offsetX = -scrollOffset + panX;
-            if (isRotated90) offsetY = panY + (height - drawW) / 2;
+             recordAction({ type: 'zoom', value: zoomDelta });
         }
         
-        // Apply zoom
-        drawW *= settings.zoom;
-        drawH *= settings.zoom;
-        
-        if (settings.zoom !== 1) {
-            const centerX = width / 2;
-            const centerY = height / 2;
-            offsetX = centerX - (centerX - offsetX) * settings.zoom;
-            offsetY = centerY - (centerY - offsetY) * settings.zoom;
-        }
-        
-        // Calculate center of drawn image
-        const cx = offsetX + (isRotated90 ? drawH : drawW) / 2;
-        const cy = offsetY + (isRotated90 ? drawW : drawH) / 2;
-        
-        // Translate screen coords relative to image center
-        let relX = screenX - cx;
-        let relY = screenY - cy;
-        
-        // Reverse rotation
-        const rotationRad = (settings.rotation * Math.PI) / 180;
-        const cosA = Math.cos(-rotationRad);
-        const sinA = Math.sin(-rotationRad);
-        const rotatedX = relX * cosA - relY * sinA;
-        const rotatedY = relX * sinA + relY * cosA;
-        
-        // Scale back to original image coords
-        const imgX = rotatedX / drawW * mediaW + mediaW / 2;
-        const imgY = rotatedY / drawH * mediaH + mediaH / 2;
-        
-        return { x: Math.round(imgX), y: Math.round(imgY) };
-    }
-    
-    // Transform image coordinates to screen coordinates
-    function imageToScreenCoords(imgX: number, imgY: number, imgW: number, imgH: number): { x: number, y: number, w: number, h: number } {
-        if (!canvas || (!image && !video)) return { x: 0, y: 0, w: 0, h: 0 };
-        
-        const media = image || video;
-        const mediaW = image ? image.width : (video as HTMLVideoElement).videoWidth;
-        const mediaH = image ? image.height : (video as HTMLVideoElement).videoHeight;
-        
-        if (!mediaW || !mediaH) return { x: 0, y: 0, w: 0, h: 0 };
-        
-        const width = canvas.width;
-        const height = canvas.height;
-        const isRotated90 = settings.rotation % 180 !== 0;
-        const effectiveW = isRotated90 ? mediaH : mediaW;
-        const effectiveH = isRotated90 ? mediaW : mediaH;
-        
-        let drawW = mediaW;
-        let drawH = mediaH;
-        let offsetX = panX;
-        let offsetY = panY;
-        
-        // Same view mode calculations as draw()
-        if (settings.viewMode === 'fit-h') {
-            const scale = width / effectiveW;
-            drawW = mediaW * scale;
-            drawH = mediaH * scale;
-            const finalH = isRotated90 ? drawW : drawH;
-            offsetY = panY + (height - finalH) / 2;
-            if (isRotated90) offsetX = panX + (width - drawH) / 2;
-        } else if (settings.viewMode === 'fit-v') {
-            const scale = height / effectiveH;
-            drawW = mediaW * scale;
-            drawH = mediaH * scale;
-            const finalW = isRotated90 ? drawH : drawW;
-            offsetX = panX + (width - finalW) / 2;
-            if (isRotated90) offsetY = panY + (height - drawW) / 2;
-        } else if (settings.viewMode === 'original') {
-            const finalW = isRotated90 ? mediaH : mediaW;
-            const finalH = isRotated90 ? mediaW : mediaH;
-            offsetX = panX + (width - finalW) / 2;
-            offsetY = panY + (height - finalH) / 2;
-        } else if (settings.viewMode === 'reader') {
-            const scale = width / effectiveW;
-            drawW = mediaW * scale;
-            drawH = mediaH * scale;
-            const finalH = isRotated90 ? drawW : drawH;
-            offsetY = -scrollOffset + panY;
-            if (isRotated90) offsetX = panX + (width - drawH) / 2;
-        } else if (settings.viewMode === 'landscape') {
-            const scale = height / effectiveH;
-            drawW = mediaW * scale;
-            drawH = mediaH * scale;
-            offsetX = -scrollOffset + panX;
-            if (isRotated90) offsetY = panY + (height - drawW) / 2;
-        }
-        
-        // Apply zoom
-        drawW *= settings.zoom;
-        drawH *= settings.zoom;
-        
-        if (settings.zoom !== 1) {
-            const centerX = width / 2;
-            const centerY = height / 2;
-            offsetX = centerX - (centerX - offsetX) * settings.zoom;
-            offsetY = centerY - (centerY - offsetY) * settings.zoom;
-        }
-        
-        // Convert image coords to relative coords
-        const relX = (imgX - mediaW / 2) / mediaW * drawW;
-        const relY = (imgY - mediaH / 2) / mediaH * drawH;
-        const relW = imgW / mediaW * drawW;
-        const relH = imgH / mediaH * drawH;
-        
-        // Apply rotation
-        const rotationRad = (settings.rotation * Math.PI) / 180;
-        const cosA = Math.cos(rotationRad);
-        const sinA = Math.sin(rotationRad);
-        const rotatedX = relX * cosA - relY * sinA;
-        const rotatedY = relX * sinA + relY * cosA;
-        
-        // Calculate center of drawn image
-        const cx = offsetX + (isRotated90 ? drawH : drawW) / 2;
-        const cy = offsetY + (isRotated90 ? drawW : drawH) / 2;
-        
-        // Convert back to screen coords
-        const screenX = rotatedX + cx;
-        const screenY = rotatedY + cy;
-        
-        return { x: Math.round(screenX), y: Math.round(screenY), w: Math.round(relW), h: Math.round(relH) };
-    }
-
-    function getEdgePosition(edge: 'top' | 'bottom' | 'left' | 'right'): number {
-        if (!canvas || (!image && !video)) return 0;
-        
-        const width = window.innerWidth;
-        const height = window.innerHeight;
-        
-        const media = image || video;
-        const mediaW = image ? image.width : (video as HTMLVideoElement).videoWidth;
-        const mediaH = image ? image.height : (video as HTMLVideoElement).videoHeight;
-        
-        if (!mediaW || !mediaH) return 0;
-
-        const isRotated90 = settings.rotation % 180 !== 0;
-        const effectiveW = isRotated90 ? mediaH : mediaW;
-        const effectiveH = isRotated90 ? mediaW : mediaH;
-
-        let drawW = mediaW;
-        let drawH = mediaH;
-
-        // Calculate dimensions based on view mode
-        if (settings.viewMode === 'fit-h' || settings.viewMode === 'reader') {
-            const scale = width / effectiveW;
-            drawW *= scale;
-            drawH *= scale;
-        } else if (settings.viewMode === 'fit-v' || settings.viewMode === 'landscape') {
-            const scale = height / effectiveH;
-            drawW *= scale;
-            drawH *= scale;
-        }
-
-        const finalW = isRotated90 ? drawH : drawW;
-        const finalH = isRotated90 ? drawW : drawH;
-
-        // Calculate edge positions
-        switch (edge) {
-            case 'top':
-                // Show top of image
-                return finalH > height ? (finalH - height) / 2 : 0;
-            case 'bottom':
-                // Show bottom of image
-                return finalH > height ? -(finalH - height) / 2 : 0;
-            case 'left':
-                // Show left of image
-                return finalW > width ? (finalW - width) / 2 : 0;
-            case 'right':
-                // Show right of image  
-                return finalW > width ? -(finalW - width) / 2 : 0;
-            default:
-                return 0;
-        }
-    }
-
-    function draw() {
-        if (!canvas || (!image && !video)) return;
-        ctx = canvas.getContext('2d', { willReadFrequently: true });
-        if (!ctx) return;
-
-        const width = canvas.width = window.innerWidth;
-        const height = canvas.height = window.innerHeight;
-        ctx.clearRect(0, 0, width, height);
-
-        ctx.filter = `brightness(${settings.brightness}%) contrast(${settings.contrast}%) saturate(${settings.saturation}%) hue-rotate(${settings.hue}deg)`;
-
-        const media = image || video;
-        if (!media) return;
-
-        const mediaW = image ? image.width : (video as HTMLVideoElement).videoWidth;
-        const mediaH = image ? image.height : (video as HTMLVideoElement).videoHeight;
-
-        if (!mediaW || !mediaH) return;
-
-        // Handle Rotation Logic
-        const rotationRad = (settings.rotation * Math.PI) / 180;
-        const isRotated90 = settings.rotation % 180 !== 0;
-        
-        // Effective dimensions for fitting logic
-        const effectiveW = isRotated90 ? mediaH : mediaW;
-        const effectiveH = isRotated90 ? mediaW : mediaH;
-
-        let drawW = mediaW;
-        let drawH = mediaH;
-        let offsetX = panX;
-        let offsetY = panY;
-
-        // Calculate scale based on effective dimensions
-        if (settings.viewMode === 'fit-h') {
-            const scale = width / effectiveW;
-            drawW = mediaW * scale;
-            drawH = mediaH * scale;
-            
-            // Center vertically
-            const finalH = isRotated90 ? drawW : drawH;
-            offsetY = panY + (height - finalH) / 2;
-            
-            // If rotated, we need to adjust offset to center properly
-            if (isRotated90) {
-                 offsetX = panX + (width - drawH) / 2;
-            }
-
-        } else if (settings.viewMode === 'fit-v') {
-            const scale = height / effectiveH;
-            drawW = mediaW * scale;
-            drawH = mediaH * scale;
-            
-            const finalW = isRotated90 ? drawH : drawW;
-            offsetX = panX + (width - finalW) / 2;
-             if (isRotated90) {
-                 offsetY = panY + (height - drawW) / 2;
-            }
-
-        } else if (settings.viewMode === 'original') {
-            const finalW = isRotated90 ? mediaH : mediaW;
-            const finalH = isRotated90 ? mediaW : mediaH;
-            offsetX = panX + (width - finalW) / 2;
-            offsetY = panY + (height - finalH) / 2;
-        } else if (settings.viewMode === 'reader') {
-             const scale = width / effectiveW;
-            drawW = mediaW * scale;
-            drawH = mediaH * scale;
-            const finalH = isRotated90 ? drawW : drawH;
-            
-            const maxOffset = Math.max(0, finalH - height);
-            if (scrollOffset > maxOffset) scrollOffset = 0;
-            offsetY = -scrollOffset + panY;
-             if (isRotated90) {
-                 offsetX = panX + (width - drawH) / 2;
-            }
-        } else if (settings.viewMode === 'landscape') {
-            const scale = height / effectiveH;
-            drawW = mediaW * scale;
-            drawH = mediaH * scale;
-             const finalW = isRotated90 ? drawH : drawW;
-
-            const maxOffset = Math.max(0, finalW - width);
-            if (scrollOffset > maxOffset) scrollOffset = 0;
-            offsetX = -scrollOffset + panX;
-             if (isRotated90) {
-                 offsetY = panY + (height - drawW) / 2;
-            }
-        }
-
-        // Apply zoom
-        drawW *= settings.zoom;
-        drawH *= settings.zoom;
-
-        // Adjust offset for zoom to center (simplified)
-        if (settings.zoom !== 1) {
-            const centerX = width / 2;
-            const centerY = height / 2;
-            offsetX = centerX - (centerX - offsetX) * settings.zoom;
-            offsetY = centerY - (centerY - offsetY) * settings.zoom;
-        }
-
-        // Draw with rotation
-        ctx.save();
-        
-        // Move to center of where we want to draw
-        // This is tricky with offsets. 
-        // Let's simplify: translate to the center of the image position, rotate, then draw centered at 0,0
-        
-        // Calculate the center point of the image on screen
-        // For unrotated: x = offsetX, y = offsetY
-        // But we want to rotate around the center of the image
-        
-        // Let's rely on the fact that we want the image at offsetX, offsetY (top-left corner usually)
-        // But with rotation, top-left changes.
-        
-        // Easier approach:
-        // Translate to the center of the canvas + pan
-        // Rotate
-        // Draw image centered
-        
-        // But our view modes calculate top-left offsets.
-        // Let's translate to the calculated center of the image.
-        
-        // Center of the image if it were not rotated:
-        const cx = offsetX + (isRotated90 ? drawH : drawW) / 2;
-        const cy = offsetY + (isRotated90 ? drawW : drawH) / 2;
-        
-        ctx.translate(cx, cy);
-        ctx.rotate(rotationRad);
-        ctx.drawImage(media, -drawW / 2, -drawH / 2, drawW, drawH);
-        
-        ctx.restore();
-        ctx.filter = 'none';
-
-        // Draw selection box (OCR) - needs to be on top, not rotated (or maybe rotated?)
-        // Usually selection is screen-space.
-        if ($isOCRMode && selectionStart && selectionEnd) {
-            const x = Math.min(selectionStart.x, selectionEnd.x);
-            const y = Math.min(selectionStart.y, selectionEnd.y);
-            const w = Math.abs(selectionEnd.x - selectionStart.x);
-            const h = Math.abs(selectionEnd.y - selectionStart.y);
-
-            ctx.strokeStyle = '#00ff00';
-            ctx.lineWidth = 2;
-            ctx.strokeRect(x, y, w, h);
-            ctx.fillStyle = 'rgba(0, 255, 0, 0.2)';
-            ctx.fillRect(x, y, w, h);
-        }
-
-        // Draw OCR Result Boxes
-        if (ocrResults.length > 0) {
-            ctx.strokeStyle = '#00ffff';
-            ctx.lineWidth = 2;
-            ctx.fillStyle = 'rgba(0, 255, 255, 0.1)';
-            
-            for (const res of ocrResults) {
-                if (res.visible) {
-                    ctx.strokeRect(res.x, res.y, res.w, res.h);
-                    ctx.fillRect(res.x, res.y, res.w, res.h);
-                }
-            }
-        }
-    }
-
-    async function performOCR(screenX: number, screenY: number, screenW: number, screenH: number) {
-        if (!image && !video) return;
-        
-        // Transform screen coordinates to image coordinates
-        const topLeft = screenToImageCoords(screenX, screenY);
-        const bottomRight = screenToImageCoords(screenX + screenW, screenY + screenH);
-        
-        const imgX = Math.min(topLeft.x, bottomRight.x);
-        const imgY = Math.min(topLeft.y, bottomRight.y);
-        const imgW = Math.abs(bottomRight.x - topLeft.x);
-        const imgH = Math.abs(bottomRight.y - topLeft.y);
-        
-        // Clamp to image bounds
-        const media = image || video;
-        const mediaW = image ? image.width : (video as HTMLVideoElement).videoWidth;
-        const mediaH = image ? image.height : (video as HTMLVideoElement).videoHeight;
-        
-        const clampedX = Math.max(0, Math.min(imgX, mediaW));
-        const clampedY = Math.max(0, Math.min(imgY, mediaH));
-        const clampedW = Math.min(imgW, mediaW - clampedX);
-        const clampedH = Math.min(imgH, mediaH - clampedY);
-        
-        if (clampedW < 10 || clampedH < 10) return;
-        
-        // Add placeholder result
-        const newResult: OCRResultItem = {
-            text: '',
-            translation: '',
-            x: screenX,
-            y: screenY,
-            w: screenW,
-            h: screenH,
-            visible: true,
-            loading: true
-        };
-        
-        ocrResults = [...ocrResults, newResult];
-        const resultIndex = ocrResults.length - 1;
-
-        try {
-            // Extract region from original image
-            const tempCanvas = document.createElement('canvas');
-            tempCanvas.width = clampedW;
-            tempCanvas.height = clampedH;
-            const tempCtx = tempCanvas.getContext('2d')!;
-            tempCtx.drawImage(media, clampedX, clampedY, clampedW, clampedH, 0, 0, clampedW, clampedH);
-            
-            if ($ollamaSettings.useVision) {
-                const dataUrl = tempCanvas.toDataURL('image/png');
-                const { recognizeAndTranslateWithVision } = await import('../lib/TranslationService');
-                const result = await recognizeAndTranslateWithVision(dataUrl, $ollamaSettings.targetLanguage);
-                ocrResults[resultIndex] = { ...ocrResults[resultIndex], loading: false, text: result.text, translation: result.translation };
-            } else {
-                const blocks = await recognizeText(tempCanvas, $ollamaSettings.ocrLanguage);
-                const text = blocks.map(b => b.text).join('\n');
-                
-                if (!text.trim()) {
-                    ocrResults[resultIndex] = { ...ocrResults[resultIndex], loading: false, text: 'No text found', translation: '' };
-                    return;
-                }
-
-                ocrResults[resultIndex] = { ...ocrResults[resultIndex], text: text.trim() };
-                const translation = await translateText(text);
-                ocrResults[resultIndex] = { ...ocrResults[resultIndex], loading: false, translation };
-            }
-        } catch (err) {
-            console.error(err);
-            ocrResults[resultIndex] = { ...ocrResults[resultIndex], loading: false, text: 'Error', translation: 'Failed' };
-        }
-    }
-
-    async function handleAutoOCR() {
-        if (!image && !video) return;
-        
-        ocrResults = []; // Clear previous
-        
-        try {
-            // Use original image for OCR, not transformed canvas
-            const media = image || video;
-            const blocks = await recognizeText(media, $ollamaSettings.ocrLanguage);
-            
-            // Transform each block's bbox from image coords to screen coords
-            ocrResults = blocks.map(block => {
-                const screenCoords = imageToScreenCoords(
-                    block.bbox.x0,
-                    block.bbox.y0,
-                    block.bbox.x1 - block.bbox.x0,
-                    block.bbox.y1 - block.bbox.y0
-                );
-                
-                return {
-                    text: block.text,
-                    translation: 'Translating...',
-                    x: screenCoords.x,
-                    y: screenCoords.y,
-                    w: screenCoords.w,
-                    h: screenCoords.h,
-                    visible: true,
-                    loading: true
-                };
-            });
-            
-            draw(); // Draw boxes
-            
-            // Now translate each block
-            await Promise.all(ocrResults.map(async (res, i) => {
-                try {
-                    const translation = await translateText(res.text);
-                    ocrResults[i] = { ...ocrResults[i], loading: false, translation };
-                } catch (e) {
-                    ocrResults[i] = { ...ocrResults[i], loading: false, translation: 'Failed' };
-                }
-            }));
-            
-        } catch (e) {
-            console.error("Auto OCR Failed", e);
-        }
-    }
-
-    let resizeTimeout: number;
-    function handleResize() {
         clearTimeout(resizeTimeout);
-        resizeTimeout = window.setTimeout(() => draw(), 100);
+        resizeTimeout = window.setTimeout(() => canvasRenderer?.draw(), 100);
     }
 
     function executeAction(action: string) {
@@ -836,43 +338,75 @@
                 break;
             case 'panUp':
                 if (settings.shift) {
-                    // Jump to top edge
-                    panY = getEdgePosition('top');
+                    panY = getEdgePosition('top', {
+                        mediaW: image ? image.width : (video as HTMLVideoElement).videoWidth,
+                        mediaH: image ? image.height : (video as HTMLVideoElement).videoHeight,
+                        settings,
+                        panX,
+                        panY,
+                        scrollOffset,
+                        windowWidth: window.innerWidth,
+                        windowHeight: window.innerHeight
+                    });
                 } else {
                     panY += PAN_SPEED;
                 }
-                draw();
-                recordAction({ type: 'pan', value: { x: 0, y: settings.shift ? getEdgePosition('top') : PAN_SPEED } });
+                canvasRenderer?.draw();
+                recordAction({ type: 'pan', value: { x: 0, y: settings.shift ? panY : PAN_SPEED } });
                 break;
             case 'panDown':
                 if (settings.shift) {
-                    // Jump to bottom edge
-                    panY = getEdgePosition('bottom');
+                    panY = getEdgePosition('bottom', {
+                        mediaW: image ? image.width : (video as HTMLVideoElement).videoWidth,
+                        mediaH: image ? image.height : (video as HTMLVideoElement).videoHeight,
+                        settings,
+                        panX,
+                        panY,
+                        scrollOffset,
+                        windowWidth: window.innerWidth,
+                        windowHeight: window.innerHeight
+                    });
                 } else {
                     panY -= PAN_SPEED;
                 }
-                draw();
-                recordAction({ type: 'pan', value: { x: 0, y: settings.shift ? getEdgePosition('bottom') : -PAN_SPEED } });
+                canvasRenderer?.draw();
+                recordAction({ type: 'pan', value: { x: 0, y: settings.shift ? panY : -PAN_SPEED } });
                 break;
             case 'panLeft':
                 if (settings.shift) {
-                    // Jump to left edge
-                    panX = getEdgePosition('left');
+                    panX = getEdgePosition('left', {
+                        mediaW: image ? image.width : (video as HTMLVideoElement).videoWidth,
+                        mediaH: image ? image.height : (video as HTMLVideoElement).videoHeight,
+                        settings,
+                        panX,
+                        panY,
+                        scrollOffset,
+                        windowWidth: window.innerWidth,
+                        windowHeight: window.innerHeight
+                    });
                 } else {
                     panX += PAN_SPEED;
                 }
-                draw();
-                recordAction({ type: 'pan', value: { x: settings.shift ? getEdgePosition('left') : PAN_SPEED, y: 0 } });
+                canvasRenderer?.draw();
+                recordAction({ type: 'pan', value: { x: settings.shift ? panX : PAN_SPEED, y: 0 } });
                 break;
             case 'panRight':
                 if (settings.shift) {
-                    // Jump to right edge
-                    panX = getEdgePosition('right');
+                    panX = getEdgePosition('right', {
+                        mediaW: image ? image.width : (video as HTMLVideoElement).videoWidth,
+                        mediaH: image ? image.height : (video as HTMLVideoElement).videoHeight,
+                        settings,
+                        panX,
+                        panY,
+                        scrollOffset,
+                        windowWidth: window.innerWidth,
+                        windowHeight: window.innerHeight
+                    });
                 } else {
                     panX -= PAN_SPEED;
                 }
-                draw();
-                recordAction({ type: 'pan', value: { x: settings.shift ? getEdgePosition('right') : -PAN_SPEED, y: 0 } });
+                canvasRenderer?.draw();
+                recordAction({ type: 'pan', value: { x: settings.shift ? panX : -PAN_SPEED, y: 0 } });
                 break;
             case 'firstFile':
                 currentFileIndex.set(0);
@@ -983,7 +517,7 @@
                 case 'pan':
                     panX += action.value.x || 0;
                     panY += action.value.y || 0;
-                    draw();
+                    canvasRenderer?.draw();
                     break;
                 case 'viewMode':
                     viewSettings.update(v => ({ 
@@ -994,7 +528,7 @@
                     break;
                 case 'zoom':
                     viewSettings.update(v => ({ ...v, zoom: Math.max(0.1, Math.min(5, v.zoom + action.value)) }));
-                    draw();
+                    canvasRenderer?.draw();
                     break;
                 case 'rotation':
                      viewSettings.update(v => ({ ...v, rotation: action.value }));
@@ -1014,6 +548,172 @@
     // Listen for macro playback events from MacroRecorder
     function handleMacroPlay(e: CustomEvent) {
         playMacro(e.detail);
+    }
+    
+    function handleResize() {
+        canvasRenderer?.draw();
+    }
+
+    function handleCloseOCRTooltip(index: number) {
+        const newResults = [...ocrResults];
+        newResults.splice(index, 1);
+        ocrResults = newResults;
+        canvasRenderer?.draw();
+    }
+
+    async function performOCR(x: number, y: number, w: number, h: number) {
+        if (!image && !video) return;
+        
+        // Convert screen coords to image coords for cropping
+        const params: TransformParams = {
+            mediaW: image ? image.width : (video ? video.videoWidth : 0),
+            mediaH: image ? image.height : (video ? video.videoHeight : 0),
+            settings: settings,
+            panX: panX,
+            panY: panY,
+            scrollOffset: scrollOffset,
+            windowWidth: window.innerWidth,
+            windowHeight: window.innerHeight,
+            canvas: canvas
+        };
+
+        const p1 = screenToImageCoords(x, y, params);
+        const p2 = screenToImageCoords(x + w, y + h, params);
+        
+        const imgX = Math.min(p1.x, p2.x);
+        const imgY = Math.min(p1.y, p2.y);
+        const imgW = Math.abs(p2.x - p1.x);
+        const imgH = Math.abs(p2.y - p1.y);
+
+        // Create temp canvas for crop
+        const tempCanvas = document.createElement('canvas');
+        tempCanvas.width = imgW;
+        tempCanvas.height = imgH;
+        const ctx = tempCanvas.getContext('2d');
+        if (!ctx) return;
+
+        const source = image || video;
+        if (source) {
+             ctx.drawImage(source as any, imgX, imgY, imgW, imgH, 0, 0, imgW, imgH);
+        }
+        
+        const dataUrl = tempCanvas.toDataURL('image/png');
+        
+        console.log("OCR Selection Debug:", {
+            screen: { x, y, w, h },
+            image: { imgX, imgY, imgW, imgH },
+            mediaDimensions: { w: params.mediaW, h: params.mediaH },
+            params: params
+        });
+        console.log("Sending to VL Model (Data URL length):", dataUrl.length);
+        
+        // Add placeholder result
+        const resultIndex = ocrResults.length;
+        ocrResults = [...ocrResults, {
+            text: "Loading...",
+            translation: "Translating...",
+            x: imgX,
+            y: imgY,
+            w: imgW,
+            h: imgH,
+            visible: true,
+            loading: true
+        }];
+        canvasRenderer?.draw();
+
+        // Call Tesseract for OCR
+        const blocks = await recognizeText(tempCanvas);
+        const extractedText = blocks.map(b => b.text).join('\n');
+        
+        console.log("Tesseract Extracted Text:", extractedText);
+
+        if (!extractedText.trim()) {
+             // Update result with error
+            const updatedResults = [...ocrResults];
+            if (updatedResults[resultIndex]) {
+                updatedResults[resultIndex] = {
+                    ...updatedResults[resultIndex],
+                    text: "No text detected",
+                    translation: "",
+                    loading: false
+                };
+                ocrResults = updatedResults;
+                canvasRenderer?.draw();
+            }
+            return;
+        }
+
+        // Call LLM for Translation
+        const translation = await translateText(extractedText);
+        
+        // Update result
+        const updatedResults = [...ocrResults];
+        if (updatedResults[resultIndex]) {
+            updatedResults[resultIndex] = {
+                ...updatedResults[resultIndex],
+                text: extractedText,
+                translation: translation,
+                loading: false
+            };
+            ocrResults = updatedResults;
+            canvasRenderer?.draw();
+        }
+    }
+
+    async function handleAutoOCR() {
+        if (!image && !video) return;
+        
+        const source = image || video;
+        
+        // 1. Detect text regions (Tesseract)
+        const regions = await recognizeText(source as any);
+        
+        if (regions.length === 0) return;
+        
+        // 2. Sort regions (Top-Down, Left-Right)
+        regions.sort((a, b) => {
+            if (Math.abs(a.bbox.y0 - b.bbox.y0) > 50) {
+                return a.bbox.y0 - b.bbox.y0;
+            }
+            return a.bbox.x0 - b.bbox.x0;
+        });
+        
+        // 3. Get full image for VL
+        const canvas = document.createElement('canvas');
+        canvas.width = (source as any).width || (source as any).videoWidth;
+        canvas.height = (source as any).height || (source as any).videoHeight;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return;
+        ctx.drawImage(source as any, 0, 0);
+        const fullImageDataUrl = canvas.toDataURL('image/jpeg');
+        
+        // 4. Translate full image
+        const result = await recognizeAndTranslateWithVision(fullImageDataUrl, settings.targetLanguage || "English");
+        
+        // 5. Split translation
+        // Assuming the model returns paragraphs/lines separated by newlines
+        const translatedLines = result.translation.split('\n').filter(line => line.trim() !== '');
+        
+        // 6. Map to regions
+        const newResults: OCRResultItem[] = [];
+        
+        regions.forEach((region, index) => {
+            if (index < translatedLines.length) {
+                newResults.push({
+                    text: region.text,
+                    translation: translatedLines[index],
+                    x: region.bbox.x0,
+                    y: region.bbox.y0,
+                    w: region.bbox.x1 - region.bbox.x0,
+                    h: region.bbox.y1 - region.bbox.y0,
+                    visible: true,
+                    loading: false
+                });
+            }
+        });
+        
+        ocrResults = [...ocrResults, ...newResults];
+        canvasRenderer?.draw();
     }
 
     onMount(() => {
@@ -1040,99 +740,24 @@
     });
 </script>
 
-<canvas 
-    bind:this={canvas} 
-    class="main-canvas"
-    style="--cursor: {$isOCRMode ? 'crosshair' : 'default'}"
+<CanvasRenderer 
+    bind:this={canvasRenderer}
+    bind:canvas={canvas}
+    {image}
+    {video}
+    {settings}
+    {panX}
+    {panY}
+    {scrollOffset}
+    isOCRMode={$isOCRMode}
+    {selectionStart}
+    {selectionEnd}
+    {ocrResults}
     on:pointerdown={handlePointerDown}
     on:pointermove={handlePointerMove}
     on:pointerup={handlePointerUp}
     on:pointercancel={handlePointerUp}
     on:wheel={handleWheel}
-></canvas>
+/>
 
-{#each ocrResults as res, i}
-    {#if res.visible}
-        <div 
-            class="ocr-tooltip" 
-            style="top: {res.y + res.h + 10}px; left: {res.x}px;"
-        >
-            {#if res.loading}
-                <div class="loading">Processing...</div>
-            {:else}
-                <div class="original-text">{res.text}</div>
-                <div class="divider"></div>
-                <div class="translated-text">{res.translation}</div>
-            {/if}
-            <button class="close-tooltip" on:click={() => {
-                const newResults = [...ocrResults];
-                newResults.splice(i, 1);
-                ocrResults = newResults;
-                draw();
-            }}>×</button>
-        </div>
-    {/if}
-{/each}
-
-<style>
-    .main-canvas {
-        display: block;
-        width: 100%;
-        height: 100%;
-        background-color: #000;
-        cursor: var(--cursor, default);
-    }
-
-    .ocr-tooltip {
-        position: fixed;
-        background: rgba(0, 0, 0, 0.9);
-        border: 1px solid var(--accent-color);
-        border-radius: 8px;
-        padding: 12px;
-        color: white;
-        max-width: 300px;
-        z-index: 1000;
-        backdrop-filter: blur(10px);
-        box-shadow: 0 4px 20px rgba(0,0,0,0.5);
-    }
-
-    .loading {
-        color: var(--accent-color);
-        font-size: 14px;
-    }
-
-    .original-text {
-        font-size: 12px;
-        color: rgba(255,255,255,0.7);
-        margin-bottom: 8px;
-        max-height: 100px;
-        overflow-y: auto;
-    }
-
-    .divider {
-        height: 1px;
-        background: rgba(255,255,255,0.2);
-        margin: 8px 0;
-    }
-
-    .translated-text {
-        font-size: 14px;
-        color: white;
-        font-weight: 500;
-    }
-
-    .close-tooltip {
-        position: absolute;
-        top: 4px;
-        right: 4px;
-        background: transparent;
-        border: none;
-        color: rgba(255,255,255,0.5);
-        cursor: pointer;
-        padding: 4px;
-    }
-
-    .close-tooltip:hover {
-        color: white;
-    }
-</style>
+<OCRPanel ocrResults={tooltipResults} onClose={handleCloseOCRTooltip} />
