@@ -36,6 +36,8 @@
 
     $: currentFile = $files[$currentFileIndex];
     $: fileCounter = $files.length > 0 ? `${$currentFileIndex + 1} / ${$files.length}` : '';
+
+
 </script>
 
 <SettingsModal />
@@ -465,5 +467,38 @@
     @keyframes fadeIn {
         from { opacity: 0; transform: translateX(-50%) translateY(-10px); }
         to { opacity: 1; transform: translateX(-50%) translateY(0); }
+    }
+
+    .video-progress {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        width: 300px;
+        margin-right: 10px;
+    }
+
+    .video-progress .time {
+        font-family: monospace;
+        font-size: 12px;
+        color: rgba(255, 255, 255, 0.7);
+        min-width: 40px;
+    }
+
+    .progress-slider {
+        flex: 1;
+        width: auto !important; /* Override default width */
+        margin: 0 !important;
+    }
+
+    .separator {
+        width: 1px;
+        height: 20px;
+        background: rgba(255, 255, 255, 0.1);
+        margin: 0 10px;
+    }
+
+    .icon-btn.small {
+        padding: 4px;
+        min-width: unset;
     }
 </style>

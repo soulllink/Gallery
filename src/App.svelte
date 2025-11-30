@@ -2,8 +2,12 @@
     import { onMount, onDestroy } from "svelte";
     import CanvasView from "./components/CanvasView.svelte";
     import OverlayControls from "./components/OverlayControls.svelte";
+    import VideoProgressBar from "./components/VideoProgressBar.svelte";
     import { handleDrop, handleTauriDrop } from "./lib/fileSystem";
+    import { files, currentFileIndex } from "./stores";
     import { getCurrentWebview } from "@tauri-apps/api/webview";
+
+    $: currentFile = $files[$currentFileIndex];
 
     let isDragging = false;
     let unlisten: () => void;
@@ -62,6 +66,7 @@
 >
     <CanvasView />
     <OverlayControls />
+    <VideoProgressBar {currentFile} />
 
     {#if isDragging}
         <div class="drop-overlay">

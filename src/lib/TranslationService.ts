@@ -55,38 +55,15 @@ ${text}`;
 export async function recognizeAndTranslateWithVision(
   imageDataUrl: string,
   targetLang: string = "English"
-): Promise<{ text: string; translation: string }> {
-  const langName = {
-    "English": "English",
-    "Japanese": "Japanese",
-    "Korean": "Korean",
-    "Chinese": "Chinese",
-    "Russian": "Russian",
-    "Spanish": "Spanish",
-    "French": "French",
-    "German": "German",
-    "Indonesian": "Indonesian",
-    "Vietnamese": "Vietnamese",
-    "Portuguese": "Portuguese"
-  }[targetLang] || "English";
-
-  const prompt = `You are a professional manga/manhwa translator.
-Extract ALL visible text from the image EXACTLY as it appears (preserve line breaks, honorifics, sound effects, and formatting).
-Then translate it naturally and fluently into ${langName}, keeping the tone, personality, and style of the original.
-
-Respond using this exact format (no extra text):
-
-ORIGINAL:
-<all extracted text here>
-
-<<SEP>>
-
-TRANSLATED:
-<your perfect translation here>`;
-
+): Promise<Record<string, string>> {
   const settings = get(ollamaSettings);
   const modelToUse = settings.model || "qwen2.5-vl:8b";
   const baseUrl = settings.url.replace(/\/$/, "");
+
+  const prompt = `Translate the following text to ${targetLang}.
+Split text as it shown on image by regions top-to-bottom, left-to-right and map they to a region number and translation
+Output valid JSON only: { "region_1": "...", "region_2": "..." }
+Do not output any other text. Don't Overthink.`;
 
   try {
     const response = await fetch(`${baseUrl}/api/chat`, {
@@ -105,7 +82,6 @@ TRANSLATED:
         options: {
           temperature: 0.3,
           num_ctx: 8192,
-          // These make Qwen-VL dramatically better at manga
           top_p: 0.95,
           repeat_penalty: 1.05
         }
@@ -120,28 +96,22 @@ TRANSLATED:
     const data = await response.json();
     const content = data.message?.content || "";
 
-    // Qwen sometimes uses <<SEPARATOR>> instead of <<SEP>>
-    const separator = content.includes("<<SEP>>") ? "<<SEP>>" : "<<SEPARATOR>>";
-    const parts = content.split(separator);
-
-    if (parts.length < 2) {
-      // Fallback: just return raw response
-      return {
-        text: "Text extraction failed (model didn't follow format)",
-        translation: content.trim()
-      };
+    try {
+      // Find JSON object in the response (it might be wrapped in markdown code blocks)
+      const jsonMatch = content.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        return JSON.parse(jsonMatch[0]);
+      } else {
+        // Try parsing the whole content if no braces found (unlikely if prompt followed)
+        return JSON.parse(content);
+      }
+    } catch (e) {
+      console.error("Failed to parse Vision JSON:", content);
+      return { "error": "Failed to parse translation" };
     }
 
-    return {
-      text: parts[0].replace(/ORIGINAL:?\s*/i, "").trim(),
-      translation: parts[1].replace(/TRANSLATED:?\s*/i, "").trim()
-    };
-
   } catch (err: any) {
-    console.error("Qwen-VL failed:", err);
-    return {
-      text: "Vision model error",
-      translation: err.message || "Check Ollama is running qwen2.5-vl:8b"
-    };
+    console.error("Vision model failed:", err);
+    return { "error": err.message || "Vision model error" };
   }
 }

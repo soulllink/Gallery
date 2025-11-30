@@ -1,4 +1,5 @@
-import Tesseract from 'tesseract.js';
+// We no longer need Tesseract
+// import Tesseract from 'tesseract.js';
 
 export interface OCRBlock {
     text: string;
@@ -11,109 +12,169 @@ export interface OCRBlock {
 }
 
 /**
- * Preprocess image for better OCR results
- * Converts to grayscale and enhances contrast
+ * REPLACEMENT: Visual Density Detector
+ * Instead of reading text, we look for "Busy Zones" (high edge density).
+ * This finds vague text, alien hieroglyphs, and messy handwriting
+ * simply because they look "busy" compared to the background.
  */
-function preprocessImage(source: HTMLCanvasElement | HTMLImageElement): Promise<string> {
+export async function detectTextRegions(source: HTMLCanvasElement | HTMLImageElement, lang: string = 'jpn'): Promise<OCRBlock[]> {
     return new Promise((resolve) => {
         const canvas = document.createElement('canvas');
-        const ctx = canvas.getContext('2d')!;
+        const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
 
-        // Get original dimensions
+        // 1. Resize for speed (we don't need 4k to find zones)
+        const processScale = 0.5; // Process at 50% scale for speed
         const width = source instanceof HTMLCanvasElement ? source.width : source.naturalWidth;
         const height = source instanceof HTMLCanvasElement ? source.height : source.naturalHeight;
 
-        canvas.width = width;
-        canvas.height = height;
+        const w = Math.floor(width * processScale);
+        const h = Math.floor(height * processScale);
 
-        // Draw source
-        ctx.drawImage(source, 0, 0);
+        canvas.width = w;
+        canvas.height = h;
+        ctx.drawImage(source, 0, 0, w, h);
 
-        // Get image data
-        const imgData = ctx.getImageData(0, 0, width, height);
+        const imgData = ctx.getImageData(0, 0, w, h);
         const data = imgData.data;
 
-        // Convert to grayscale and enhance contrast
-        const contrast = 1.5; // Contrast factor
-        const intercept = 128 * (1 - contrast);
+        // 2. Grid Configuration
+        const tileSize = 20; // 20x20 pixel tiles
+        const cols = Math.ceil(w / tileSize);
+        const rows = Math.ceil(h / tileSize);
+        const grid = new Uint8Array(cols * rows); // 0 = empty, 1 = text
 
-        for (let i = 0; i < data.length; i += 4) {
-            const r = data[i];
-            const g = data[i + 1];
-            const b = data[i + 2];
+        // 3. Edge Density Scan
+        // We calculate the "Manhattan Distance" between adjacent pixels.
+        // Text has VERY high variance between neighbors.
+        for (let y = 0; y < rows; y++) {
+            for (let x = 0; x < cols; x++) {
+                let edgeScore = 0;
 
-            // Grayscale (luminosity method)
-            let gray = 0.21 * r + 0.72 * g + 0.07 * b;
+                // Scan pixels inside this tile
+                const startX = x * tileSize;
+                const startY = y * tileSize;
+                const endX = Math.min(startX + tileSize, w);
+                const endY = Math.min(startY + tileSize, h);
 
-            // Contrast enhancement
-            gray = gray * contrast + intercept;
+                for (let py = startY; py < endY; py += 2) { // Skip every other row for speed
+                    for (let px = startX; px < endX - 1; px++) {
+                        const i = (py * w + px) * 4;
 
-            // Clamp values
-            gray = Math.max(0, Math.min(255, gray));
+                        // Convert to roughly Gray on the fly
+                        const lum1 = (data[i] + data[i+1] + data[i+2]) / 3;
+                        const lum2 = (data[i+4] + data[i+5] + data[i+6]) / 3;
 
-            data[i] = gray;
-            data[i + 1] = gray;
-            data[i + 2] = gray;
+                        // Difference (Edge)
+                        if (Math.abs(lum1 - lum2) > 15) {
+                            edgeScore++;
+                        }
+                    }
+                }
+
+                // Threshold: If tile has enough "scratchy" parts, it's text
+                // Adjust this number: Lower = detects more vague stuff / noise
+                if (edgeScore > (tileSize * tileSize * 0.05)) {
+                    grid[y * cols + x] = 1;
+                }
+            }
         }
 
-        ctx.putImageData(imgData, 0, 0);
-        resolve(canvas.toDataURL('image/png'));
+        // 4. Morphological Closing (Smear logic)
+        // Connect isolated text tiles into blocks
+        const smearedGrid = new Uint8Array(grid);
+
+        // Horizontal Smear (connect letters)
+        for (let y = 0; y < rows; y++) {
+            for (let x = 1; x < cols - 1; x++) {
+                const idx = y * cols + x;
+                if (grid[idx-1] && grid[idx+1]) smearedGrid[idx] = 1;
+            }
+        }
+        // Vertical Smear (connect lines)
+        for (let y = 1; y < rows - 1; y++) {
+            for (let x = 0; x < cols; x++) {
+                const idx = y * cols + x;
+                if (grid[idx - cols] && grid[idx + cols]) smearedGrid[idx] = 1;
+            }
+        }
+
+        // 5. Clustering (Simple Blob Detection)
+        const blocks: OCRBlock[] = [];
+        const visited = new Uint8Array(cols * rows);
+
+        for (let y = 0; y < rows; y++) {
+            for (let x = 0; x < cols; x++) {
+                const idx = y * cols + x;
+                if (smearedGrid[idx] === 1 && visited[idx] === 0) {
+                    // Start a flood fill to find the full box
+                    const bounds = floodFill(x, y, cols, rows, smearedGrid, visited);
+
+                    // Filter tiny noise
+                    if (bounds.w > 2 && bounds.h > 1) {
+                        blocks.push({
+                            text: "Detected Zone", // Placeholder
+                            bbox: {
+                                x0: Math.floor(bounds.x * tileSize / processScale),
+                                y0: Math.floor(bounds.y * tileSize / processScale),
+                                x1: Math.floor((bounds.x + bounds.w) * tileSize / processScale),
+                                y1: Math.floor((bounds.y + bounds.h) * tileSize / processScale)
+                            }
+                        });
+                    }
+                }
+            }
+        }
+
+        console.log(`Visual Density found ${blocks.length} zones.`);
+        resolve(blocks);
     });
 }
 
-/**
- * Detect text regions using Tesseract OCR
- * This function only finds where text is located, not the actual text content
- * Use OllamaOCRService for actual text recognition and translation
- */
-export async function detectTextRegions(source: HTMLCanvasElement | HTMLImageElement, lang: string = 'jpn'): Promise<OCRBlock[]> {
-    // Preprocess image for better OCR
-    const preprocessedImage = await preprocessImage(source);
+function floodFill(startX: number, startY: number, cols: number, rows: number, grid: Uint8Array, visited: Uint8Array) {
+    let minX = startX, maxX = startX, minY = startY, maxY = startY;
+    const stack = [{x: startX, y: startY}];
+    visited[startY * cols + startX] = 1;
 
-    const worker = await Tesseract.createWorker(lang);
+    while (stack.length > 0) {
+        const p = stack.pop()!;
 
-    const { data } = await worker.recognize(preprocessedImage);
-    await worker.terminate();
+        // Update Bounds
+        if (p.x < minX) minX = p.x;
+        if (p.x > maxX) maxX = p.x;
+        if (p.y < minY) minY = p.y;
+        if (p.y > maxY) maxY = p.y;
 
-    // Extract blocks from the result
-    const blocks: OCRBlock[] = [];
+        // Check neighbors (4-way)
+        const neighbors = [
+            {x: p.x + 1, y: p.y}, {x: p.x - 1, y: p.y},
+            {x: p.x, y: p.y + 1}, {x: p.x, y: p.y - 1}
+        ];
 
-    if (data.blocks) {
-        console.log("Tesseract OCR Raw Blocks:", data.blocks.map(b => ({ text: b.text, bbox: b.bbox, confidence: b.confidence })));
-        for (const block of data.blocks) {
-            if (block.text && block.text.trim()) {
-                blocks.push({
-                    text: block.text.trim(),
-                    bbox: {
-                        x0: block.bbox.x0,
-                        y0: block.bbox.y0,
-                        x1: block.bbox.x1,
-                        y1: block.bbox.y1
-                    }
-                });
+        for (const n of neighbors) {
+            if (n.x >= 0 && n.x < cols && n.y >= 0 && n.y < rows) {
+                const idx = n.y * cols + n.x;
+                if (grid[idx] === 1 && visited[idx] === 0) {
+                    visited[idx] = 1;
+                    stack.push(n);
+                }
             }
         }
     }
 
-    return blocks;
+    return { x: minX, y: minY, w: (maxX - minX + 1), h: (maxY - minY + 1) };
 }
 
 /**
- * Alias for detectTextRegions - for backward compatibility
- * Handles HTMLVideoElement by converting to canvas first
+ * Wrapper for compatibility
  */
 export async function recognizeText(source: HTMLCanvasElement | HTMLImageElement | HTMLVideoElement, lang: string = 'jpn'): Promise<OCRBlock[]> {
-    // If it's a video, draw current frame to a canvas first
     if (source instanceof HTMLVideoElement) {
         const canvas = document.createElement('canvas');
         canvas.width = source.videoWidth;
         canvas.height = source.videoHeight;
         const ctx = canvas.getContext('2d');
-        if (ctx) {
-            ctx.drawImage(source, 0, 0);
-        }
+        if (ctx) ctx.drawImage(source, 0, 0);
         return detectTextRegions(canvas, lang);
     }
-
     return detectTextRegions(source, lang);
 }

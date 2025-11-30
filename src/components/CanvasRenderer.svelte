@@ -1,6 +1,6 @@
 <script lang="ts">
     import type { ViewSettings } from '../stores';
-    
+
     export let canvas: HTMLCanvasElement;
     export let image: HTMLImageElement | null = null;
     export let video: HTMLVideoElement | null = null;
@@ -24,8 +24,11 @@
 
     let ctx: CanvasRenderingContext2D | null;
 
-    // Reactive draw when any parameter changes
+    // --- FIX: Explicit Reactivity ---
+    // We explicitly reference 'settings', 'panX', 'panY' etc. so Svelte knows
+    // to re-run this block (and call draw) when they change.
     $: if (canvas && (image || video)) {
+        settings; panX; panY; scrollOffset; isOCRMode; selectionStart; selectionEnd; ocrResults;
         draw();
     }
 
@@ -51,7 +54,7 @@
         // Handle Rotation Logic
         const rotationRad = (settings.rotation * Math.PI) / 180;
         const isRotated90 = settings.rotation % 180 !== 0;
-        
+
         // Effective dimensions for fitting logic
         const effectiveW = isRotated90 ? mediaH : mediaW;
         const effectiveH = isRotated90 ? mediaW : mediaH;
@@ -61,16 +64,17 @@
         let offsetX = panX;
         let offsetY = panY;
 
+        // --- Logic matches CoordinateTransforms.ts ---
         // Calculate scale based on effective dimensions
         if (settings.viewMode === 'fit-h') {
             const scale = width / effectiveW;
             drawW = mediaW * scale;
             drawH = mediaH * scale;
-            
+
             // Center vertically
             const finalH = isRotated90 ? drawW : drawH;
             offsetY = panY + (height - finalH) / 2;
-            
+
             // If rotated, we need to adjust offset to center properly
             if (isRotated90) {
                  offsetX = panX + (width - drawH) / 2;
@@ -80,7 +84,7 @@
             const scale = height / effectiveH;
             drawW = mediaW * scale;
             drawH = mediaH * scale;
-            
+
             const finalW = isRotated90 ? drawH : drawW;
             offsetX = panX + (width - finalW) / 2;
              if (isRotated90) {
@@ -97,7 +101,7 @@
             drawW = mediaW * scale;
             drawH = mediaH * scale;
             const finalH = isRotated90 ? drawW : drawH;
-            
+
             const maxOffset = Math.max(0, finalH - height);
             if (scrollOffset > maxOffset) scrollOffset = 0;
             offsetY = -scrollOffset + panY;
@@ -122,7 +126,7 @@
         drawW *= settings.zoom;
         drawH *= settings.zoom;
 
-        // Adjust offset for zoom to center (simplified)
+        // Adjust offset for zoom to center
         if (settings.zoom !== 1) {
             const centerX = width / 2;
             const centerY = height / 2;
@@ -132,20 +136,21 @@
 
         // Draw with rotation
         ctx.save();
-        
+
         // Calculate the center point of the image on screen
         const cx = offsetX + (isRotated90 ? drawH : drawW) / 2;
         const cy = offsetY + (isRotated90 ? drawW : drawH) / 2;
-        
+
         ctx.translate(cx, cy);
         ctx.rotate(rotationRad);
         ctx.drawImage(media, -drawW / 2, -drawH / 2, drawW, drawH);
-        
+
         ctx.restore();
         ctx.filter = 'none';
 
-        // Draw selection box (OCR) - screen-space
-        if (isOCRMode && selectionStart && selectionEnd) {
+        // --- FIX: Draw selection box AFTER image (Screen Space) ---
+        // Removed 'isOCRMode' check so it draws whenever selectionStart/End exist.
+        if (selectionStart && selectionEnd) {
             const x = Math.min(selectionStart.x, selectionEnd.x);
             const y = Math.min(selectionStart.y, selectionEnd.y);
             const w = Math.abs(selectionEnd.x - selectionStart.x);
@@ -159,21 +164,19 @@
         }
 
         // Draw OCR Result Boxes
-        // Draw OCR Result Boxes
         if (ocrResults.length > 0) {
             ctx.save();
-            // Apply the same transform as the image
             ctx.translate(cx, cy);
             ctx.rotate(rotationRad);
-            
-            // Transform from image space (0..mediaW) to draw space (-drawW/2..drawW/2)
+
+            // Transform from image space to draw space
             ctx.translate(-drawW / 2, -drawH / 2);
             ctx.scale(drawW / mediaW, drawH / mediaH);
 
             ctx.strokeStyle = '#00ffff';
-            ctx.lineWidth = 2 / (drawW / mediaW); // Adjust line width to be constant on screen
+            ctx.lineWidth = 2 / (drawW / mediaW);
             ctx.fillStyle = 'rgba(0, 255, 255, 0.1)';
-            
+
             for (const res of ocrResults) {
                 if (res.visible) {
                     ctx.strokeRect(res.x, res.y, res.w, res.h);
@@ -185,8 +188,8 @@
     }
 </script>
 
-<canvas 
-    bind:this={canvas} 
+<canvas
+    bind:this={canvas}
     class="main-canvas"
     style="--cursor: {isOCRMode ? 'crosshair' : 'default'}"
     on:pointerdown
