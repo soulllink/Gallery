@@ -18,12 +18,12 @@ export function screenToImageCoords(
     screenY: number,
     params: TransformParams
 ): { x: number; y: number } {
-    const { canvas, mediaW, mediaH, settings, panX, panY, scrollOffset } = params;
+    const { canvas, mediaW, mediaH, settings, panX, panY, scrollOffset, windowWidth, windowHeight } = params;
 
     if (!mediaW || !mediaH) return { x: 0, y: 0 };
 
-    const width = canvas.width;
-    const height = canvas.height;
+    const width = windowWidth;
+    const height = windowHeight;
     const isRotated90 = settings.rotation % 180 !== 0;
     const effectiveW = isRotated90 ? mediaH : mediaW;
     const effectiveH = isRotated90 ? mediaW : mediaH;
@@ -122,12 +122,12 @@ export function imageToScreenCoords(
     imgH: number,
     params: TransformParams
 ): { x: number; y: number; w: number; h: number } {
-    const { canvas, mediaW, mediaH, settings, panX, panY, scrollOffset } = params;
+    const { canvas, mediaW, mediaH, settings, panX, panY, scrollOffset, windowWidth, windowHeight } = params;
 
     if (!mediaW || !mediaH) return { x: 0, y: 0, w: 0, h: 0 };
 
-    const width = canvas.width;
-    const height = canvas.height;
+    const width = windowWidth;
+    const height = windowHeight;
     const isRotated90 = settings.rotation % 180 !== 0;
     const effectiveW = isRotated90 ? mediaH : mediaW;
     const effectiveH = isRotated90 ? mediaW : mediaH;

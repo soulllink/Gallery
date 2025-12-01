@@ -1,9 +1,12 @@
 <script lang="ts">
     import { openDirectory } from '../lib/fileSystem';
     import { viewSettings, gotoFile, files, currentFileIndex, isLoading, isUIVisible, isSettingsOpen, isOCRMode } from '../stores';
-    import SearchWidget from './SearchWidget.svelte';
+    import FilterWidget from './FilterWidget.svelte';
     import SettingsModal from './SettingsModal.svelte';
+    import { createEventDispatcher } from 'svelte';
     import MacroRecorder from './MacroRecorder.svelte';
+
+    const dispatch = createEventDispatcher();
 
     function handleOpen() {
         openDirectory();
@@ -87,7 +90,10 @@
 
             <div class="spacer"></div>
             
-            <SearchWidget />
+            <FilterWidget 
+                on:search={(e) => dispatch('search', e.detail)}
+                on:sort={(e) => dispatch('sort', e.detail)}
+            />
             <input type="number" min="1" placeholder="Go to #" bind:value={gotoInput} class="goto-input" on:keydown={(e) => e.key === 'Enter' && handleGoto()} />
             <button class="icon-btn" on:click={handleGoto} title="Go To">Go</button>
             
@@ -96,16 +102,9 @@
             
             <!-- OCR Toggle -->
             <button 
-                class="icon-btn {$isOCRMode ? 'active' : ''}" 
-                on:click={(e) => {
-                    if (e.shiftKey) {
-                        isOCRMode.update(v => !v);
-                    } else {
-                        // Trigger Auto OCR
-                        window.dispatchEvent(new CustomEvent('triggerAutoOCR'));
-                    }
-                }} 
-                title="OCR / Translate (Click: Auto, Shift+Click: Manual)"
+                class="icon-btn {$isOCRMode ? 'active-filled' : ''}" 
+                on:click={() => isOCRMode.update(v => !v)} 
+                title="OCR / Translate (Toggle Manual Mode)"
             >
                 <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
             </button>
@@ -363,6 +362,12 @@
     .mode-btn.active {
         background: var(--accent-gradient);
         color: white;
+    }
+    
+    .icon-btn.active-filled {
+        background: #cf30aa;
+        color: white;
+        border-color: transparent;
     }
     
     .goto-input {

@@ -8,6 +8,15 @@
     import { getCurrentWebview } from "@tauri-apps/api/webview";
 
     $: currentFile = $files[$currentFileIndex];
+    $: if (currentFile) {
+        const title = `Gallery - ${$currentFileIndex + 1} / ${$files.length} - ${currentFile.name}`;
+        document.title = title;
+        if ("__TAURI_INTERNALS__" in window) {
+            import('@tauri-apps/api/window').then(module => {
+                module.getCurrentWindow().setTitle(title);
+            });
+        }
+    }
 
     let isDragging = false;
     let unlisten: () => void;
@@ -54,6 +63,70 @@
             await handleDrop(e.dataTransfer.items);
         }
     }
+
+    // --- Context Menu & Sorting ---
+    import ContextMenu from "./components/ContextMenu.svelte";
+    import { open } from '@tauri-apps/plugin-shell';
+    import { remove } from '@tauri-apps/plugin-fs';
+
+    let contextMenu = { visible: false, x: 0, y: 0 };
+
+    async function handleContextAction(e: CustomEvent) {
+        const action = e.detail;
+        contextMenu.visible = false;
+        if (!currentFile) return;
+
+        try {
+            switch (action) {
+                case 'open':
+                    await open(currentFile.path);
+                    break;
+                case 'reveal':
+                    // Open parent directory
+                    const separator = navigator.userAgent.includes('Windows') ? '\\' : '/';
+                    const parentDir = currentFile.path.substring(0, currentFile.path.lastIndexOf(separator));
+                    if (parentDir) {
+                        await open(parentDir);
+                    }
+                    break;
+                case 'copy':
+                    // Copy file path to clipboard? Or file itself?
+                    // navigator.clipboard.writeText(currentFile.path);
+                    break;
+                case 'delete':
+                    if (confirm(`Delete ${currentFile.name}?`)) {
+                        await remove(currentFile.path);
+                        // Remove from store
+                        files.update(f => f.filter(x => x.path !== currentFile.path));
+                    }
+                    break;
+                case 'properties':
+                    alert(`Path: ${currentFile.path}\nSize: ${currentFile.size}\nType: ${currentFile.type}`);
+                    break;
+            }
+        } catch (err) {
+            console.error("Action failed:", err);
+        }
+    }
+
+    function handleSearch(query: string) {
+        // Implement search logic (filtering the files store)
+        // This requires the files store to support filtering or a separate derived store
+        console.log("Search:", query);
+    }
+
+    function handleSort(mode: string) {
+        files.update(items => {
+            const sorted = [...items];
+            switch (mode) {
+                case 'name': sorted.sort((a, b) => a.name.localeCompare(b.name)); break;
+                // We need date info in FileItem to sort by date
+                // case 'date-created': ...
+                // case 'ext': ...
+            }
+            return sorted;
+        });
+    }
 </script>
 
 <div class="grid"></div>
@@ -64,9 +137,21 @@
     on:drop={onDrop}
     class:dragging={isDragging}
 >
-    <CanvasView />
-    <OverlayControls />
+    <CanvasView 
+        on:contextmenu={(e) => {
+            // e.detail contains { x, y } from CanvasView
+            contextMenu = { visible: true, x: e.detail.x, y: e.detail.y };
+        }}
+    />
+    <OverlayControls 
+        on:search={(e) => handleSearch(e.detail)}
+        on:sort={(e) => handleSort(e.detail)}
+    />
     <VideoProgressBar {currentFile} />
+    <ContextMenu 
+        {...contextMenu} 
+        on:action={handleContextAction}
+    />
 
     {#if isDragging}
         <div class="drop-overlay">
@@ -92,6 +177,8 @@
         </div>
     {/if}
 </main>
+
+<svelte:window on:click={() => contextMenu.visible = false} />
 
 <style>
     .grid {

@@ -173,9 +173,9 @@
             ctx.translate(-drawW / 2, -drawH / 2);
             ctx.scale(drawW / mediaW, drawH / mediaH);
 
-            ctx.strokeStyle = '#00ffff';
+            ctx.strokeStyle = 'rgba(0, 255, 255, 0.3)'; // More subtle
             ctx.lineWidth = 2 / (drawW / mediaW);
-            ctx.fillStyle = 'rgba(0, 255, 255, 0.1)';
+            ctx.fillStyle = 'rgba(0, 255, 255, 0.05)'; // Very subtle fill
 
             for (const res of ocrResults) {
                 if (res.visible) {

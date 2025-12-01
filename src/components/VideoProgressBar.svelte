@@ -147,8 +147,8 @@
     /* The visual lines */
     .rail, .buffer, .fill {
         position: absolute;
-        height: 4px;
-        border-radius: 2px;
+        height: 8px;
+        border-radius: 4px;
         left: 0;
         top: 50%;
         transform: translateY(-50%);
@@ -161,7 +161,7 @@
     }
 
     .fill {
-        background: var(--accent-color, #3b82f6);
+        background: #3b82f6; /* Explicit Blue */
         box-shadow: 0 0 10px rgba(59, 130, 246, 0.5);
     }
 

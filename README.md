@@ -1,57 +1,69 @@
-## Gallery app
+# Gallery App
 
-![Screenshot of my application](https://raw.githubusercontent.com/soulllink/Gallery/refs/heads/main/Image.png)
+![Screenshot](https://raw.githubusercontent.com/soulllink/Gallery/refs/heads/main/Image.png)
 
-Gallery app is a modern, high-performance desktop gallery application for Windows, developed using Svelte, TypeScript, and Tauri. It provides not only basic media file viewing but also powerful tools for controlling video playback, image editing, and innovative OCR and translation features that run entirely locally thanks to Ollama.
+A fast, modern desktop gallery application built with Svelte, TypeScript, and Tauri.
 
-## Key Features
-
-Gallery app transforms ordinary media viewing into a powerful and customizable experience:
+## Features
 
 ### Media Viewing
+- Support for images (JPEG, PNG, WEBP, etc.) and videos (MP4, MKV, etc.)
+- Multiple view modes: Original, Fit Horizontal, Fit Vertical, Reader, Landscape Scroll
+- Canvas pan with mouse/arrow keys
+- Zoom controls
+- Image rotation
+- Drag-and-drop files and folders
 
-Universal Viewing: Supports images (JPEG, PNG, WEBP, etc.) and videos (MP4, MKV, etc.).
+### Color Adjustments
+- Real-time brightness, contrast, saturation, and hue control
+- Applies to both images and videos
 
-### Color Control:
+### Video Controls
+- Playback speed adjustment (0.25x - 4x)
+- Volume boost up to 600%
+- Progress bar with seek functionality
 
-Smooth real-time adjustment of color properties for images and videos (brightness, contrast, saturation, hue).
+### OCR & Translation (Powered by Ollama)
+- Manual text recognition: Select any region to extract and translate text
+- All processing happens locally on your machine
+- Results cached in SQLite database for instant reload
+- Draggable translation tooltips
+- Privacy-focused: No data sent to external servers
 
-### Flexible Video Control:
+### File Management
+- Right-click context menu:
+  - Open file in default application
+  - Reveal in file explorer
+  - Copy file
+  - Delete file
+  - View properties
+- Search and filter files
+- Sort by name, date created, date modified, or extension
 
-Playback Speed: Speed adjustment from standard up to 4x for detailed analysis or accelerated viewing.
+### Macros
+- Record sequences of actions
+- Assign custom keybindings to macros
+- 10 macro slots available
 
-Extreme Volume: Audio amplification up to 600% for working with quiet soundtracks.
+### Customization
+- Configurable keybindings
+- Pan sensitivity adjustment
+- Zoom sensitivity adjustment
 
-## Local AI Features (Powered by Ollama)
+## Requirements
 
-Integration with the local Ollama model ensures data privacy and processing speed:
+- [Ollama](https://ollama.ai/) running locally (for OCR/translation features)
+- Vision-capable model (e.g., `qwen3-vl:8b`)
 
-Built-in OCR (Optical Character Recognition): Instant recognition of text in any image or video frame.
+## Development
 
-Contextual Translation: On-the-fly translation of recognized text, operating without the need to send data to remote servers.
+```bash
+npm install
+npm run tauri dev
+```
 
-## Macros and Automation
+## Build
 
-Macro Recorder: Recording sequences of user actions (key presses, data input) to automate repetitive tasks within the application.
-
-Custom Keybindings: Assigning recorded macros to custom hotkeys for quick access to complex features or settings.
-
-## Using AI Features
-
-View Media: Open any image or video in the application.
-
-Run OCR: Press the "Recognize Text" button (or the configured macro hotkey).
-
-### Translate: Select the recognized text, press "Translate," and Ollama will perform the local translation, displaying the result.
-
-Note: Ensure your local Ollama server is running before using these features.
-
-### Macros (Keybindings & Recorder)
-
-The "Settings" > "Macros" section allows you to:
-
-Click "Record" and perform a sequence of actions (e.g., increase speed, apply filter, run OCR).
-
-Click "Stop" and save the macro with a name.
-
-Assign a key combination for instant execution of the recorded macro.
+```bash
+npm run tauri build
+```

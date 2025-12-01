@@ -23,6 +23,8 @@ export interface ViewSettings {
   rotation: number;
   shift: boolean;
   volume: number;
+  zoomSensitivity: number;
+  panSensitivity: number;
 }
 
 export interface KeyBinding {
@@ -88,6 +90,8 @@ export const viewSettings = writable<ViewSettings>({
   rotation: 0,
   shift: false,
   volume: 100,
+  zoomSensitivity: 1,
+  panSensitivity: 1,
 });
 
 export const ollamaSettings = writable<OllamaSettings>({

@@ -9,7 +9,8 @@
 
     // Import Logic Helpers
     import { MediaManager } from '../lib/Canvas/MediaManager';
-    import { performOCR, handleAutoOCR, type OCRResultItem } from '../lib/Canvas/OCRHandler';
+    import { dbService } from '../lib/DatabaseService';
+    import { performOCR, type OCRResultItem } from '../lib/Canvas/OCRHandler';
 
     // ... (Keep existing state variables: canvas, image, video, panX, panY, etc.)
     let canvas: HTMLCanvasElement;
@@ -70,6 +71,8 @@
     async function loadFileItem(item: FileItem) {
         stopAutoScroll();
         if (videoFrame) cancelAnimationFrame(videoFrame);
+        ocrResults = []; // Clear previous OCR results
+
         const result = await mediaManager.loadFile(item, video, settings);
         image = result.image;
         video = result.video;
@@ -77,6 +80,27 @@
         scrollOffset = 0;
         panX = 0;
         panY = 0;
+        
+        // Load Translations from DB AFTER media is loaded
+        try {
+            const cached = await dbService.getTranslationsForFile(item.path);
+            if (cached && cached.length > 0) {
+                ocrResults = cached.map(c => ({
+                    text: c.text,
+                    translation: c.translated_text,
+                    x: c.x,
+                    y: c.y,
+                    w: c.w,
+                    h: c.h,
+                    visible: true,
+                    loading: false,
+                    dbId: c.id
+                }));
+            }
+        } catch (e) {
+            console.error("Failed to load translations", e);
+        }
+
         if (settings.viewMode === 'reader' && item.type === 'image') {
             startAutoScroll();
         }
@@ -96,16 +120,10 @@
     async function onPerformOCR(x: number, y: number, w: number, h: number) {
         ocrResults = await performOCR(
             { x, y, w, h },
-            { image, video },
+            { image, video, currentFilePath: fileItem?.path },
             getTransformParams(),
             ocrResults
         );
-        canvasRenderer?.draw();
-    }
-
-    async function onAutoOCR() {
-        const newResults = await handleAutoOCR({ image, video }, settings.targetLanguage || "English");
-        ocrResults = [...ocrResults, ...newResults];
         canvasRenderer?.draw();
     }
 
@@ -140,8 +158,8 @@
             selectionEnd = { x: e.clientX, y: e.clientY };
             canvasRenderer?.draw();
         } else if (isPointerDown && !isRightClickDown) {
-            const dx = e.clientX - lastPointerX;
-            const dy = e.clientY - lastPointerY;
+            const dx = (e.clientX - lastPointerX) * settings.panSensitivity;
+            const dy = (e.clientY - lastPointerY) * settings.panSensitivity;
             lastPointerX = e.clientX;
             lastPointerY = e.clientY;
             panX += dx;
@@ -197,16 +215,22 @@
 
     // ... (Keep remaining functions: handleContextMenu, handleWheel, startAutoScroll, executeAction, recordAction, handleKeydown, playMacro, handleResize, handleSeekVideo, handleMacroPlay)
 
+    import { createEventDispatcher } from 'svelte';
+    const dispatch = createEventDispatcher();
+
     function handleContextMenu(e: MouseEvent) {
         if (blockContextMenu) {
             e.preventDefault();
             blockContextMenu = false;
+            return;
         }
+        e.preventDefault();
+        dispatch('contextmenu', { x: e.clientX, y: e.clientY });
     }
 
     function handleWheel(e: WheelEvent) {
         e.preventDefault();
-        const zoomDelta = -e.deltaY * 0.001;
+        const zoomDelta = -e.deltaY * 0.001 * settings.zoomSensitivity;
         const newZoom = Math.max(0.1, Math.min(5, settings.zoom + zoomDelta));
         viewSettings.update(v => ({ ...v, zoom: newZoom }));
         if ($isRecording) recordAction({ type: 'zoom', value: zoomDelta });
@@ -329,7 +353,6 @@
     onMount(() => {
         window.addEventListener('resize', handleResize);
         window.addEventListener('keydown', handleKeydown);
-        window.addEventListener('triggerAutoOCR', onAutoOCR);
         window.addEventListener('contextmenu', handleContextMenu);
         window.addEventListener('playMacro', handleMacroPlay as EventListener);
         window.addEventListener('seekVideo', handleSeekVideo as EventListener);
@@ -339,7 +362,6 @@
         stopAutoScroll();
         window.removeEventListener('resize', handleResize);
         window.removeEventListener('keydown', handleKeydown);
-        window.removeEventListener('triggerAutoOCR', onAutoOCR);
         window.removeEventListener('contextmenu', handleContextMenu);
         window.removeEventListener('playMacro', handleMacroPlay as EventListener);
         window.removeEventListener('seekVideo', handleSeekVideo as EventListener);

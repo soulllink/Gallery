@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { isSettingsOpen, keybindings, macroSlots, ollamaSettings } from '../stores';
+    import { isSettingsOpen, keybindings, macroSlots, ollamaSettings, viewSettings } from '../stores';
     import type { KeyBinding } from '../stores';
 
     let editingIndex = -1;
@@ -135,6 +135,20 @@
                         {/each}
                     </div>
                     <button class="reset-btn" on:click={resetToDefaults}>Reset to Defaults</button>
+                </section>
+
+                <section>
+                    <h3>Navigation Sensitivity</h3>
+                    <div class="settings-grid">
+                        <div class="setting-group">
+                            <label>Zoom Sensitivity ({$viewSettings.zoomSensitivity})</label>
+                            <input type="range" min="0.1" max="5" step="0.1" bind:value={$viewSettings.zoomSensitivity} />
+                        </div>
+                        <div class="setting-group">
+                            <label>Pan Sensitivity ({$viewSettings.panSensitivity})</label>
+                            <input type="range" min="0.1" max="5" step="0.1" bind:value={$viewSettings.panSensitivity} />
+                        </div>
+                    </div>
                 </section>
 
                 <section>
