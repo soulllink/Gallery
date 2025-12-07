@@ -111,8 +111,20 @@
 <svelte:window on:keydown={(e) => (editingIndex >= 0 || editingMacroIndex >= 0) && handleKeyCapture(e, editingIndex >= 0 ? editingIndex : editingMacroIndex)} />
 
 {#if $isSettingsOpen}
-    <div class="settings-overlay" on:click={closeSettings}>
-        <div class="settings-modal glass-panel" on:click|stopPropagation>
+    <div 
+        class="settings-overlay" 
+        on:click={closeSettings} 
+        on:keydown={(e) => e.key === 'Escape' && closeSettings()}
+        role="button"
+        tabindex="0"
+    >
+        <div 
+            class="settings-modal glass-panel" 
+            on:click|stopPropagation 
+            on:keydown|stopPropagation={(e) => {}}
+            role="dialog"
+            aria-modal="true"
+        >
             <div class="settings-header">
                 <h2>Settings</h2>
                 <button class="close-btn" on:click={closeSettings}>✕</button>
@@ -141,12 +153,12 @@
                     <h3>Navigation Sensitivity</h3>
                     <div class="settings-grid">
                         <div class="setting-group">
-                            <label>Zoom Sensitivity ({$viewSettings.zoomSensitivity})</label>
-                            <input type="range" min="0.1" max="5" step="0.1" bind:value={$viewSettings.zoomSensitivity} />
+                            <label for="zoom-sensitivity">Zoom Sensitivity ({$viewSettings.zoomSensitivity})</label>
+                            <input id="zoom-sensitivity" type="range" min="0.1" max="5" step="0.1" bind:value={$viewSettings.zoomSensitivity} />
                         </div>
                         <div class="setting-group">
-                            <label>Pan Sensitivity ({$viewSettings.panSensitivity})</label>
-                            <input type="range" min="0.1" max="5" step="0.1" bind:value={$viewSettings.panSensitivity} />
+                            <label for="pan-sensitivity">Pan Sensitivity ({$viewSettings.panSensitivity})</label>
+                            <input id="pan-sensitivity" type="range" min="0.1" max="5" step="0.1" bind:value={$viewSettings.panSensitivity} />
                         </div>
                     </div>
                 </section>
@@ -179,16 +191,16 @@
                     <h3>Ollama / Translation</h3>
                     <div class="settings-grid">
                         <div class="setting-group">
-                            <label>Ollama URL</label>
-                            <input type="text" bind:value={$ollamaSettings.url} placeholder="http://localhost:11434" />
+                            <label for="ollama-url">Ollama URL</label>
+                            <input id="ollama-url" type="text" bind:value={$ollamaSettings.url} placeholder="http://localhost:11434" />
                         </div>
                         <div class="setting-group">
-                            <label>Model</label>
+                            <label for="ollama-model">Model</label>
                             <div class="model-input-group">
-                                <input type="text" bind:value={$ollamaSettings.model} placeholder="llama3" list="model-list" />
+                                <input id="ollama-model" type="text" bind:value={$ollamaSettings.model} placeholder="llama3" list="model-list" />
                                 <datalist id="model-list">
                                     {#each availableModels as model}
-                                        <option value={model} />
+                                        <option value={model}>{model}</option>
                                     {/each}
                                 </datalist>
                                 <button class="fetch-btn" on:click={fetchModels} disabled={isFetchingModels}>
@@ -196,8 +208,8 @@
                                 </button>
                         </div>
                         <div class="setting-group">
-                            <label>Target Language (Translation)</label>
-                            <input type="text" bind:value={$ollamaSettings.targetLanguage} placeholder="English" />
+                            <label for="target-language">Target Language (Translation)</label>
+                            <input id="target-language" type="text" bind:value={$ollamaSettings.targetLanguage} placeholder="English" />
                         </div>
                         <div class="setting-group">
                             <label for="ocr-language">OCR Language:</label>
@@ -211,13 +223,6 @@
                                 <option value="deu">German</option>
                                 <option value="spa">Spanish</option>
                             </select>
-                        </div>
-                        <div class="setting-group">
-                            <label>
-                                <input type="checkbox" bind:checked={$ollamaSettings.useVision} />
-                                Use Vision Model (for better Japanese/Chinese OCR)
-                            </label>
-                            <p class="setting-hint">Enable this if using a vision-enabled model like llava or llama3.2-vision. Skips Tesseract and sends image directly to LLM.</p>
                         </div>
                     </div>
                 </section>
@@ -374,14 +379,6 @@
         border-color: var(--accent-color);
     }
 
-    .macro-key {
-        background: rgba(255, 255, 255, 0.1);
-        padding: 4px 10px;
-        border-radius: 4px;
-        font-family: monospace;
-        font-size: 12px;
-        color: rgba(255, 255, 255, 0.8);
-    }
 
     .macro-actions {
         color: rgba(255, 255, 255, 0.5);

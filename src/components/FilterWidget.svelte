@@ -41,7 +41,7 @@
           <div id="input-mask"></div>
           <div id="pink-mask"></div>
           <div class="filterBorder"></div>
-          <div id="filter-icon" on:click={toggleExpand}>
+          <div id="filter-icon" on:click={toggleExpand} on:keydown={(e) => e.key === 'Enter' && toggleExpand()} role="button" tabindex="0">
             <svg
               preserveAspectRatio="none"
               height="27"

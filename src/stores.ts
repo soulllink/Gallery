@@ -59,7 +59,6 @@ export interface OllamaSettings {
   model: string;
   targetLanguage: string;
   ocrLanguage: string;
-  useVision: boolean;
 }
 
 export const files = writable<FileItem[]>([]);
@@ -99,7 +98,6 @@ export const ollamaSettings = writable<OllamaSettings>({
   model: "qwen3-vl:8b",
   targetLanguage: "English",
   ocrLanguage: "jpn",
-  useVision: false,
 });
 
 export const isMenuOpen = writable<boolean>(false);

@@ -50,7 +50,7 @@
 
     $: if (settings && video) {
         video.playbackRate = settings.videoSpeed;
-        video.volume = Math.min(settings.volume / 100, 6);
+        mediaManager.updateVolume(settings.volume);
         canvasRenderer?.draw();
     }
     $: if (fileItem) loadFileItem(fileItem);
@@ -367,6 +367,7 @@
         window.removeEventListener('seekVideo', handleSeekVideo as EventListener);
         if (videoFrame) cancelAnimationFrame(videoFrame);
         if (currentUrl) URL.revokeObjectURL(currentUrl);
+        mediaManager.cleanupAudio();
     });
 </script>
 

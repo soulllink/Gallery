@@ -54,6 +54,8 @@
             class:dragging={dragging === i}
             style={res.isFallback ? '' : `top: ${res.y}px; left: ${res.x}px;`}
             on:mousedown={(e) => startDrag(e, i)}
+            role="group"
+            aria-label="Translation Tooltip"
         >
             {#if res.loading}
                 <div class="loading">Processing...</div>

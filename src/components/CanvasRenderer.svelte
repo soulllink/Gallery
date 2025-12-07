@@ -23,6 +23,7 @@
     }> = [];
 
     let ctx: CanvasRenderingContext2D | null;
+    let videoContainer: HTMLDivElement;
 
     // --- FIX: Explicit Reactivity ---
     // We explicitly reference 'settings', 'panX', 'panY' etc. so Svelte knows
@@ -42,6 +43,26 @@
         ctx.clearRect(0, 0, width, height);
 
         ctx.filter = `brightness(${settings.brightness}%) contrast(${settings.contrast}%) saturate(${settings.saturation}%) hue-rotate(${settings.hue}deg)`;
+
+        // If Video is present, we handle it via CSS Transform on the native element
+        // we DO NOT draw it to canvas to save performance on large 4k files
+        if (video && videoContainer) {
+            // Ensure video element is in the DOM (it is passed as prop 'video', but we need to place it or use a local binding)
+            // Actually, the parent passes the video OBJECT. We should probably append it to our container 
+            // OR the parent should just handle the video element.
+            // PROPOSAL: We will assume 'video' prop IS the element. We just need to ensure it is visible and positioned.
+            // Wait, standardizing: The 'video' prop is created in MediaManager. It is not in the DOM by default.
+            // We need to append it to our container if it's not there.
+            if (video.parentElement !== videoContainer) {
+                videoContainer.innerHTML = '';
+                videoContainer.appendChild(video);
+                video.style.position = 'absolute';
+                video.style.transformOrigin = 'center center';
+                video.style.pointerEvents = 'none'; // Let events pass to canvas
+            }
+        } else if (videoContainer) {
+             videoContainer.innerHTML = '';
+        }
 
         const media = image || video;
         if (!media) return;
@@ -141,11 +162,33 @@
         const cx = offsetX + (isRotated90 ? drawH : drawW) / 2;
         const cy = offsetY + (isRotated90 ? drawW : drawH) / 2;
 
-        ctx.translate(cx, cy);
-        ctx.rotate(rotationRad);
-        ctx.drawImage(media, -drawW / 2, -drawH / 2, drawW, drawH);
+        if (image) {
+            ctx.save();
+            ctx.translate(cx, cy);
+            ctx.rotate(rotationRad);
+            ctx.drawImage(media, -drawW / 2, -drawH / 2, drawW, drawH);
+            ctx.restore();
+        } else if (video && videoContainer) {
+            // Apply CSS transform to the video element
+            // We need to map the canvas transforms to CSS
+            // cx, cy is the center of the video on screen
+            // drawW, drawH is the dimensions
+            // rotationRad is rotation
+            
+            // Translate to center, rotate, then offset by half size to center the element
+            video.style.width = `${drawW}px`;
+            video.style.height = `${drawH}px`;
+            // video.style.transform = `translate(${cx - drawW/2}px, ${cy - drawH/2}px) rotate(${settings.rotation}deg)`;
+            
+            // Better approach: Position at top-left 0,0 and use translate
+            video.style.left = `${cx - drawW/2}px`;
+            video.style.top = `${cy - drawH/2}px`;
+            video.style.transform = `rotate(${settings.rotation}deg)`;
+            
+            // Apply filters to video too
+            video.style.filter = ctx.filter;
+        }
 
-        ctx.restore();
         ctx.filter = 'none';
 
         // --- FIX: Draw selection box AFTER image (Screen Space) ---
@@ -199,12 +242,30 @@
     on:wheel
 ></canvas>
 
+<div 
+    class="video-layer" 
+    bind:this={videoContainer}
+></div>
+
 <style>
     .main-canvas {
         display: block;
         width: 100%;
         height: 100%;
-        background-color: #000;
+        background-color: transparent; /* Changed to transparent so video shows through */
+        position: relative;
+        z-index: 10;
         cursor: var(--cursor, default);
+    }
+    
+    .video-layer {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        z-index: 5; /* Below canvas */
+        background-color: #000; /* Background for the video area */
     }
 </style>

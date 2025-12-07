@@ -215,6 +215,7 @@
         justify-content: space-between;
         padding: 20px;
         box-sizing: border-box;
+        z-index: 20; /* Ensure UI is above canvas (z-index 10) and video (z-index 5) */
     }
     
     .glass-panel {
@@ -223,6 +224,10 @@
         display: flex;
         gap: 10px;
         align-items: center;
+        background: rgba(0, 0, 0, 0.5);
+        backdrop-filter: blur(10px);
+        border-radius: 12px;
+        border: 1px solid rgba(255, 255, 255, 0.1);
     }
     
     .top-bar {
@@ -472,38 +477,5 @@
     @keyframes fadeIn {
         from { opacity: 0; transform: translateX(-50%) translateY(-10px); }
         to { opacity: 1; transform: translateX(-50%) translateY(0); }
-    }
-
-    .video-progress {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        width: 300px;
-        margin-right: 10px;
-    }
-
-    .video-progress .time {
-        font-family: monospace;
-        font-size: 12px;
-        color: rgba(255, 255, 255, 0.7);
-        min-width: 40px;
-    }
-
-    .progress-slider {
-        flex: 1;
-        width: auto !important; /* Override default width */
-        margin: 0 !important;
-    }
-
-    .separator {
-        width: 1px;
-        height: 20px;
-        background: rgba(255, 255, 255, 0.1);
-        margin: 0 10px;
-    }
-
-    .icon-btn.small {
-        padding: 4px;
-        min-width: unset;
     }
 </style>

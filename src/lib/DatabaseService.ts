@@ -20,6 +20,13 @@ class DatabaseService {
 
     async init() {
         if (this.db) return;
+
+        // Check if running in Tauri environment
+        if (!("__TAURI_INTERNALS__" in window)) {
+            console.warn("Not running in Tauri. Database disabled.");
+            return;
+        }
+
         try {
             this.db = await Database.load(`sqlite:${DB_NAME}`);
             await this.createTables();

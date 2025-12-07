@@ -110,7 +110,11 @@ async function callOllama(base64Image: string, prompt: string, settings: any, ex
         }
     } catch (error) {
         console.error('Ollama Service Error:', error);
-        return handleError((error as Error).message, expectArray);
+
+        // Return a safe fallback object/array so the UI doesn't crash
+        // The UI expects an object with originalText/translation or an array of them.
+        const errorMsg = (error as Error).message || "Unknown Error";
+        return handleError(errorMsg, expectArray);
     }
 }
 
