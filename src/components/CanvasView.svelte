@@ -207,7 +207,26 @@
             const totalDx = panX - panStartX;
             const totalDy = panY - panStartY;
             if (Math.abs(totalDx) > 1 || Math.abs(totalDy) > 1) {
-                recordAction({ type: 'pan', value: { x: totalDx, y: totalDy } });
+                const params = getTransformParams();
+                const w = params.mediaW || 1;
+                const h = params.mediaH || 1;
+                
+                // Axis Locking to prevent drift
+                let rx = totalDx;
+                let ry = totalDy;
+                
+                if (Math.abs(totalDx) > Math.abs(totalDy) * 3) ry = 0;
+                else if (Math.abs(totalDy) > Math.abs(totalDx) * 3) rx = 0;
+
+                // Record relative to image dimensions at current zoom
+                recordAction({ 
+                    type: 'pan', 
+                    value: { 
+                        x: rx / (w * settings.zoom), 
+                        y: ry / (h * settings.zoom) 
+                    },
+                    relative: true
+                });
             }
             isPointerDown = false;
         }
@@ -232,8 +251,9 @@
         e.preventDefault();
         const zoomDelta = -e.deltaY * 0.001 * settings.zoomSensitivity;
         const newZoom = Math.max(0.1, Math.min(5, settings.zoom + zoomDelta));
+        const multiplier = newZoom / settings.zoom;
         viewSettings.update(v => ({ ...v, zoom: newZoom }));
-        if ($isRecording) recordAction({ type: 'zoom', value: zoomDelta });
+        if ($isRecording) recordAction({ type: 'zoom', value: multiplier, relative: true });
         clearTimeout(resizeTimeout);
         resizeTimeout = window.setTimeout(() => canvasRenderer?.draw(), 100);
     }
@@ -302,16 +322,51 @@
     }
 
     function recordAction(action: MacroAction) {
-        if ($isRecording) recordedActions.update(actions => [...actions, { ...action, timestamp: Date.now() }]);
+        if ($isRecording) {
+            recordedActions.update(actions => {
+                const now = Date.now();
+                const lastAction = actions[actions.length - 1];
+                if (lastAction && lastAction.timestamp) {
+                    const diff = now - lastAction.timestamp;
+                    if (diff > 0) {
+                        // Round up to nearest 100ms (0.1s)
+                        const delay = Math.ceil(diff / 100) * 100;
+                        if (delay > 0) {
+                             actions.push({ type: 'wait', value: delay, timestamp: now });
+                        }
+                    }
+                }
+                return [...actions, { ...action, timestamp: now }];
+            });
+        }
     }
 
     function handleKeydown(e: KeyboardEvent) {
+        if (e.key === 'Escape') {
+             if (isMacroPlaying) {
+                 stopMacroFlag = true;
+                 return;
+             }
+             // Existing Shift logic
+             // ...
+        }
+
         if (e.key === 'r' || e.key === 'R') {
             viewSettings.update(s => ({ ...s, rotation: (s.rotation + 90) % 360 }));
             return;
         }
         const macroSlot = $macroSlots.find(slot => slot.keyBinding && slot.keyBinding === e.key && slot.actions.length > 0);
-        if (macroSlot) { e.preventDefault(); playMacro(macroSlot.actions); return; }
+        if (macroSlot) { 
+            e.preventDefault(); 
+            // If already playing this macro (or any macro), stop it?
+            // For now, if playing, stop. If not, play.
+            if (isMacroPlaying) {
+                stopMacroFlag = true;
+            } else {
+                playMacro(macroSlot.actions, macroSlot.loop); 
+            }
+            return; 
+        }
         if (e.target instanceof HTMLInputElement && e.target.type !== 'range') return;
         if (e.target instanceof HTMLTextAreaElement) return;
         if (e.shiftKey !== settings.shift) viewSettings.update(s => ({ ...s, shift: e.shiftKey }));
@@ -324,31 +379,88 @@
         if (binding) { e.preventDefault(); executeAction(binding.action); }
     }
 
-    function playMacro(actions: MacroAction[]) {
-        let actionIndex = 0;
-        function executeNext() {
-            if (actionIndex >= actions.length) return;
-            const action = actions[actionIndex];
-            actionIndex++;
-            switch (action.type) {
-                case 'navigate':
-                    if (action.value > 0) currentFileIndex.update(i => Math.min(i + action.value, $files.length - 1));
-                    else currentFileIndex.update(i => Math.max(i + action.value, 0));
-                    break;
-                case 'pan': panX += action.value.x || 0; panY += action.value.y || 0; canvasRenderer?.draw(); break;
-                case 'viewMode': viewSettings.update(v => ({ ...v, viewMode: action.value, zoom: (action.value === 'fit-h' || action.value === 'fit-v') ? 1 : v.zoom })); break;
-                case 'zoom': viewSettings.update(v => ({ ...v, zoom: Math.max(0.1, Math.min(5, v.zoom + action.value)) })); canvasRenderer?.draw(); break;
-                case 'rotation': viewSettings.update(v => ({ ...v, rotation: action.value })); break;
-                case 'wait': setTimeout(executeNext, action.value || 0); return;
-            }
-            setTimeout(executeNext, 10);
+    let isMacroPlaying = false;
+    let stopMacroFlag = false;
+
+    async function playMacro(actions: MacroAction[], loop: boolean = false) {
+        if (isMacroPlaying) {
+             stopMacroFlag = true;
+             return;
         }
-        executeNext();
+
+        isMacroPlaying = true;
+        stopMacroFlag = false;
+
+        async function runSequence() {
+            let actionIndex = 0;
+            
+            // Helper to execute with delay
+            const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+            while (actionIndex < actions.length) {
+                if (stopMacroFlag) break;
+
+                const action = actions[actionIndex];
+                actionIndex++;
+
+                switch (action.type) {
+                    case 'navigate':
+                        if (action.value > 0) currentFileIndex.update(i => Math.min(i + action.value, $files.length - 1));
+                        else currentFileIndex.update(i => Math.max(i + action.value, 0));
+                        break;
+                    case 'zoom': 
+                        if (action.relative) {
+                            viewSettings.update(v => ({ ...v, zoom: Math.max(0.1, Math.min(5, v.zoom * action.value)) }));
+                        } else {
+                            viewSettings.update(v => ({ ...v, zoom: Math.max(0.1, Math.min(5, v.zoom + action.value)) })); 
+                        }
+                        canvasRenderer?.draw(); 
+                        break;
+                    case 'pan':
+                         if (action.relative) {
+                             const params = getTransformParams();
+                             const w = params.mediaW || 1;
+                             const h = params.mediaH || 1;
+                             // dx = relX * w * zoom
+                             panX += action.value.x * w * settings.zoom;
+                             panY += action.value.y * h * settings.zoom;
+                         } else {
+                             panX += action.value.x; 
+                             panY += action.value.y; 
+                         }
+                         canvasRenderer?.draw(); 
+                         break;
+                    case 'rotation': viewSettings.update(v => ({ ...v, rotation: action.value })); break;
+                    case 'wait': 
+                        await delay(action.value || 0);
+                        break;
+                }
+                // Small delay between actions to prevent UI freeze if no wait actions
+                await delay(10);
+            }
+
+            if (loop && !stopMacroFlag) {
+                // Check if user pressed any key to stop (handled via event listener elsewhere, but here we check flag)
+                // Recursive call effectively
+                await runSequence();
+            }
+        }
+
+        await runSequence();
+        isMacroPlaying = false;
+        stopMacroFlag = false;
     }
 
     function handleResize() { canvasRenderer?.draw(); }
     function handleSeekVideo(e: CustomEvent) { if (video && e.detail.percentage !== undefined) { video.currentTime = e.detail.percentage * video.duration; canvasRenderer?.draw(); } }
-    function handleMacroPlay(e: CustomEvent) { playMacro(e.detail); }
+    function handleMacroPlay(e: CustomEvent) { 
+        if (e.detail.actions) {
+             playMacro(e.detail.actions, e.detail.loop); 
+        } else {
+             // Fallback for old events or direct action array
+             playMacro(e.detail);
+        }
+    }
 
     onMount(() => {
         window.addEventListener('resize', handleResize);

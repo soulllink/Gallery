@@ -46,12 +46,14 @@ export interface MacroAction {
   | "rotation";
   value?: any;
   timestamp?: number;
+  relative?: boolean;
 }
 
 export interface MacroSlot {
   name: string;
   actions: MacroAction[];
   keyBinding?: string;
+  loop?: boolean;
 }
 
 export interface OllamaSettings {

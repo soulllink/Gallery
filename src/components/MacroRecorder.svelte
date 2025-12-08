@@ -33,13 +33,21 @@
 
         // Dispatch custom event with macro actions
         window.dispatchEvent(
-            new CustomEvent("playMacro", { detail: slot.actions }),
+            new CustomEvent("playMacro", { detail: { actions: slot.actions, loop: slot.loop } }),
         );
     }
 
     function clearMacro(slotIndex: number) {
         macroSlots.update((slots) => {
             slots[slotIndex].actions = [];
+            slots[slotIndex].loop = false;
+            return slots;
+        });
+    }
+
+    function toggleAutoLoop(slotIndex: number) {
+        macroSlots.update((slots) => {
+            slots[slotIndex].loop = !slots[slotIndex].loop;
             return slots;
         });
     }
@@ -141,6 +149,10 @@
                             >
                         </div>
                         <div class="slot-controls">
+                            <button
+                                class="ctrl-btn auto-btn {slot.loop ? 'active' : ''}"
+                                on:click={() => toggleAutoLoop(i)}
+                                title="Toggle Auto Loop (A)">A</button>
                             {#if !$isRecording}
                                 <button
                                     class="ctrl-btn record-btn"
@@ -408,5 +420,16 @@
 
     .clear-btn:hover:not(:disabled) {
         background: rgba(255, 100, 100, 0.3);
+    }
+
+    .auto-btn {
+        font-weight: bold;
+        color: rgba(255, 255, 255, 0.5);
+    }
+
+    .auto-btn.active {
+        color: white;
+        background: var(--accent-color);
+        border-color: var(--accent-color);
     }
 </style>
