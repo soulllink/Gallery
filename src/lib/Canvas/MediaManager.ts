@@ -40,7 +40,9 @@ export class MediaManager {
         if (this.previousFileItem && this.previousFileItem.url) {
             const oldUrl = this.previousFileItem.url;
             this.previousFileItem.url = undefined;
-            setTimeout(() => URL.revokeObjectURL(oldUrl), 1000);
+            if (oldUrl.startsWith("blob:")) {
+                setTimeout(() => URL.revokeObjectURL(oldUrl), 1000);
+            }
         }
 
         // Cleanup previous audio context if exists

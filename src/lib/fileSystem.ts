@@ -128,7 +128,7 @@ export async function handleDrop(items: DataTransferItemList) {
   for (let i = 0; i < items.length; i++) {
     const item = items[i];
     if (item.kind === "file") {
-      const entry = await item.getAsFileSystemHandle();
+      const entry = await (item as any).getAsFileSystemHandle();
       if (entry) {
         if (entry.kind === "directory") {
           await collectFiles(entry as FileSystemDirectoryHandle, fileList);
