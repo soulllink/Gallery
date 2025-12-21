@@ -18,12 +18,15 @@ export interface CachedTranslation {
 class DatabaseService {
     private db: Database | null = null;
 
+    private initAttempted = false;
+
     async init() {
-        if (this.db) return;
+        if (this.db || this.initAttempted) return;
+        this.initAttempted = true;
 
         // Check if running in Tauri environment
         if (!("__TAURI_INTERNALS__" in window)) {
-            console.warn("Not running in Tauri. Database disabled.");
+            console.debug("Not running in Tauri. Database disabled.");
             return;
         }
 

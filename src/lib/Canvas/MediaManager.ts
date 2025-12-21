@@ -7,6 +7,7 @@ interface MediaState {
     video: HTMLVideoElement | null;
     currentUrl: string | null;
     videoFrame: number | null;
+    isGif: boolean;
 }
 
 export class MediaManager {
@@ -29,7 +30,8 @@ export class MediaManager {
             image: null,
             video: null,
             currentUrl: null,
-            videoFrame: null
+            videoFrame: null,
+            isGif: false
         };
 
         if (currentVideo) {
@@ -58,6 +60,10 @@ export class MediaManager {
                 newState.image.onload = () => this.onRedraw();
                 newState.image.onerror = () => console.error('Failed to load image:', item.name);
                 newState.image.src = url;
+                // Simple GIF detection by extension for now
+                if (item.name.toLowerCase().endsWith('.gif')) {
+                    newState.isGif = true;
+                }
             } else if (item.type === 'video') {
                 newState.video = document.createElement('video');
                 newState.video.src = url;

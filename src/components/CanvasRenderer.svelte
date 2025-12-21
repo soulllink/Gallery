@@ -4,79 +4,62 @@
     export let canvas: HTMLCanvasElement;
     export let image: HTMLImageElement | null = null;
     export let video: HTMLVideoElement | null = null;
+    export let isGif: boolean = false;
     export let settings: ViewSettings;
     export let panX: number = 0;
     export let panY: number = 0;
     export let scrollOffset: number = 0;
     export let isOCRMode: boolean = false;
-    export let selectionStart: { x: number; y: number } | null = null;
-    export let selectionEnd: { x: number; y: number } | null = null;
-    export let ocrResults: Array<{
-        text: string;
-        translation: string;
-        x: number;
-        y: number;
-        w: number;
-        h: number;
-        visible: boolean;
-        loading: boolean;
-    }> = [];
-
+    export let selectionStart: { x: number, y: number } | null = null;
+    export let selectionEnd: { x: number, y: number } | null = null;
+    export let ocrResults: any[] = [];
+    
     let ctx: CanvasRenderingContext2D | null;
-    let videoContainer: HTMLDivElement;
+    let mediaContainer: HTMLDivElement;
+    let lastDrawTime = 0;
 
-    // --- FIX: Explicit Reactivity ---
-    // We explicitly reference 'settings', 'panX', 'panY' etc. so Svelte knows
-    // to re-run this block (and call draw) when they change.
-    $: if (canvas && (image || video)) {
-        settings; panX; panY; scrollOffset; isOCRMode; selectionStart; selectionEnd; ocrResults;
-        draw();
-    }
+    // ...
 
     export function draw() {
         if (!canvas || (!image && !video)) return;
         ctx = canvas.getContext('2d', { willReadFrequently: true });
         if (!ctx) return;
 
+        // Ensure canvas matches window size
         const width = canvas.width = window.innerWidth;
         const height = canvas.height = window.innerHeight;
-        ctx.clearRect(0, 0, width, height);
 
-        ctx.filter = `brightness(${settings.brightness}%) contrast(${settings.contrast}%) saturate(${settings.saturation}%) hue-rotate(${settings.hue}deg)`;
-
-        // If Video is present, we handle it via CSS Transform on the native element
-        // we DO NOT draw it to canvas to save performance on large 4k files
-        if (video && videoContainer) {
-            // Ensure video element is in the DOM (it is passed as prop 'video', but we need to place it or use a local binding)
-            // Actually, the parent passes the video OBJECT. We should probably append it to our container 
-            // OR the parent should just handle the video element.
-            // PROPOSAL: We will assume 'video' prop IS the element. We just need to ensure it is visible and positioned.
-            // Wait, standardizing: The 'video' prop is created in MediaManager. It is not in the DOM by default.
-            // We need to append it to our container if it's not there.
-            if (video.parentElement !== videoContainer) {
-                videoContainer.innerHTML = '';
-                videoContainer.appendChild(video);
-                video.style.position = 'absolute';
-                video.style.transformOrigin = 'center center';
-                video.style.pointerEvents = 'none'; // Let events pass to canvas
+        // 1. Setup Media Container (DOM Layer) for Video or GIF
+        // We only append if not already appended to avoid reloading/flickering
+        if ((video || (image && isGif)) && mediaContainer) {
+            const element = video || image;
+            if (element && element.parentElement !== mediaContainer) {
+                mediaContainer.innerHTML = '';
+                mediaContainer.appendChild(element);
+                element.style.position = 'absolute';
+                element.style.transformOrigin = 'center center';
+                element.style.pointerEvents = 'none'; // Allow clicks to pass through to canvas
+                element.style.willChange = 'transform, width, height, top, left';
             }
-        } else if (videoContainer) {
-             videoContainer.innerHTML = '';
+        } else if (mediaContainer) {
+            mediaContainer.innerHTML = '';
         }
 
         const media = image || video;
         if (!media) return;
 
+        // 2. Clear Canvas
+        ctx.clearRect(0, 0, width, height);
+
+        // 3. Determine Dimensions
         const mediaW = image ? image.width : (video as HTMLVideoElement).videoWidth;
         const mediaH = image ? image.height : (video as HTMLVideoElement).videoHeight;
-
+        
         if (!mediaW || !mediaH) return;
 
-        // Handle Rotation Logic
+        // 4. Calculate Draw Dimensions based on View Mode
         const rotationRad = (settings.rotation * Math.PI) / 180;
         const isRotated90 = settings.rotation % 180 !== 0;
-
-        // Effective dimensions for fitting logic
         const effectiveW = isRotated90 ? mediaH : mediaW;
         const effectiveH = isRotated90 ? mediaW : mediaH;
 
@@ -85,69 +68,57 @@
         let offsetX = panX;
         let offsetY = panY;
 
-        // --- Logic matches CoordinateTransforms.ts ---
-        // Calculate scale based on effective dimensions
-        if (settings.viewMode === 'fit-h') {
-            const scale = width / effectiveW;
-            drawW = mediaW * scale;
-            drawH = mediaH * scale;
-
-            // Center vertically
-            const finalH = isRotated90 ? drawW : drawH;
-            offsetY = panY + (height - finalH) / 2;
-
-            // If rotated, we need to adjust offset to center properly
-            if (isRotated90) {
-                 offsetX = panX + (width - drawH) / 2;
+        switch (settings.viewMode) {
+            case 'fit-h': {
+                const scale = width / effectiveW;
+                drawW = mediaW * scale;
+                drawH = mediaH * scale;
+                const finalH = isRotated90 ? drawW : drawH;
+                offsetY = panY + (height - finalH) / 2;
+                if (isRotated90) offsetX = panX + (width - drawH) / 2;
+                break;
             }
-
-        } else if (settings.viewMode === 'fit-v') {
-            const scale = height / effectiveH;
-            drawW = mediaW * scale;
-            drawH = mediaH * scale;
-
-            const finalW = isRotated90 ? drawH : drawW;
-            offsetX = panX + (width - finalW) / 2;
-             if (isRotated90) {
-                 offsetY = panY + (height - drawW) / 2;
+            case 'fit-v': {
+                const scale = height / effectiveH;
+                drawW = mediaW * scale;
+                drawH = mediaH * scale;
+                const finalW = isRotated90 ? drawH : drawW;
+                offsetX = panX + (width - finalW) / 2;
+                if (isRotated90) offsetY = panY + (height - drawW) / 2;
+                break;
             }
-
-        } else if (settings.viewMode === 'original') {
-            const finalW = isRotated90 ? mediaH : mediaW;
-            const finalH = isRotated90 ? mediaW : mediaH;
-            offsetX = panX + (width - finalW) / 2;
-            offsetY = panY + (height - finalH) / 2;
-        } else if (settings.viewMode === 'reader') {
-             const scale = width / effectiveW;
-            drawW = mediaW * scale;
-            drawH = mediaH * scale;
-            const finalH = isRotated90 ? drawW : drawH;
-
-            const maxOffset = Math.max(0, finalH - height);
-            if (scrollOffset > maxOffset) scrollOffset = 0;
-            offsetY = -scrollOffset + panY;
-             if (isRotated90) {
-                 offsetX = panX + (width - drawH) / 2;
+            case 'reader': {
+                const scale = width / effectiveW;
+                drawW = mediaW * scale;
+                drawH = mediaH * scale;
+                offsetY = -scrollOffset + panY;
+                if (isRotated90) offsetX = panX + (width - drawH) / 2;
+                break;
             }
-        } else if (settings.viewMode === 'landscape') {
-            const scale = height / effectiveH;
-            drawW = mediaW * scale;
-            drawH = mediaH * scale;
-             const finalW = isRotated90 ? drawH : drawW;
-
-            const maxOffset = Math.max(0, finalW - width);
-            if (scrollOffset > maxOffset) scrollOffset = 0;
-            offsetX = -scrollOffset + panX;
-             if (isRotated90) {
-                 offsetY = panY + (height - drawW) / 2;
+            case 'landscape': {
+                const scale = height / effectiveH;
+                drawW = mediaW * scale;
+                drawH = mediaH * scale;
+                offsetX = -scrollOffset + panX;
+                if (isRotated90) offsetY = panY + (height - drawW) / 2;
+                break;
+            }
+            case 'original':
+            default: {
+                // Center originally
+                const finalW = isRotated90 ? mediaH : mediaW;
+                const finalH = isRotated90 ? mediaW : mediaH;
+                offsetX = panX + (width - finalW) / 2;
+                offsetY = panY + (height - finalH) / 2;
+                break;
             }
         }
 
-        // Apply zoom
+        // 5. Apply Zoom
         drawW *= settings.zoom;
         drawH *= settings.zoom;
 
-        // Adjust offset for zoom to center
+        // 6. Adjust offset for Zoom (centering logic)
         if (settings.zoom !== 1) {
             const centerX = width / 2;
             const centerY = height / 2;
@@ -155,79 +126,64 @@
             offsetY = centerY - (centerY - offsetY) * settings.zoom;
         }
 
-        // Draw with rotation
-        ctx.save();
-
-        // Calculate the center point of the image on screen
+        // 7. Calculate Center of the Image on Screen
+        // This is the anchor point for rotation
         const cx = offsetX + (isRotated90 ? drawH : drawW) / 2;
         const cy = offsetY + (isRotated90 ? drawW : drawH) / 2;
 
-        if (image) {
+        // 8. Apply Filters
+        const filterString = `brightness(${settings.brightness}%) contrast(${settings.contrast}%) saturate(${settings.saturation}%) hue-rotate(${settings.hue}deg)`;
+
+        // 9. Render
+        if (image && !isGif) {
+            // Render Static Image to Canvas
+            ctx.filter = filterString;
             ctx.save();
             ctx.translate(cx, cy);
             ctx.rotate(rotationRad);
+            // Draw centered at (0,0) in rotated context
             ctx.drawImage(media, -drawW / 2, -drawH / 2, drawW, drawH);
             ctx.restore();
-        } else if (video && videoContainer) {
-            // Apply CSS transform to the video element
-            // We need to map the canvas transforms to CSS
-            // cx, cy is the center of the video on screen
-            // drawW, drawH is the dimensions
-            // rotationRad is rotation
-            
-            // Translate to center, rotate, then offset by half size to center the element
-            video.style.width = `${drawW}px`;
-            video.style.height = `${drawH}px`;
-            // video.style.transform = `translate(${cx - drawW/2}px, ${cy - drawH/2}px) rotate(${settings.rotation}deg)`;
-            
-            // Better approach: Position at top-left 0,0 and use translate
-            video.style.left = `${cx - drawW/2}px`;
-            video.style.top = `${cy - drawH/2}px`;
-            video.style.transform = `rotate(${settings.rotation}deg)`;
-            
-            // Apply filters to video too
-            video.style.filter = ctx.filter;
-        }
-
-        ctx.filter = 'none';
-
-        // --- FIX: Draw selection box AFTER image (Screen Space) ---
-        // Removed 'isOCRMode' check so it draws whenever selectionStart/End exist.
-        if (selectionStart && selectionEnd) {
-            const x = Math.min(selectionStart.x, selectionEnd.x);
-            const y = Math.min(selectionStart.y, selectionEnd.y);
-            const w = Math.abs(selectionEnd.x - selectionStart.x);
-            const h = Math.abs(selectionEnd.y - selectionStart.y);
-
-            ctx.strokeStyle = '#00ff00';
-            ctx.lineWidth = 2;
-            ctx.strokeRect(x, y, w, h);
-            ctx.fillStyle = 'rgba(0, 255, 0, 0.2)';
-            ctx.fillRect(x, y, w, h);
-        }
-
-        // Draw OCR Result Boxes
-        if (ocrResults.length > 0) {
-            ctx.save();
-            ctx.translate(cx, cy);
-            ctx.rotate(rotationRad);
-
-            // Transform from image space to draw space
-            ctx.translate(-drawW / 2, -drawH / 2);
-            ctx.scale(drawW / mediaW, drawH / mediaH);
-
-            ctx.strokeStyle = 'rgba(0, 255, 255, 0.3)'; // More subtle
-            ctx.lineWidth = 2 / (drawW / mediaW);
-            ctx.fillStyle = 'rgba(0, 255, 255, 0.05)'; // Very subtle fill
-
-            for (const res of ocrResults) {
-                if (res.visible) {
-                    ctx.strokeRect(res.x, res.y, res.w, res.h);
-                    ctx.fillRect(res.x, res.y, res.w, res.h);
-                }
+        } else if ((video || (image && isGif)) && mediaContainer) {
+            // Update DOM Element (Video or GIF)
+            const element = video || image;
+            if (element) {
+                element.style.width = `${drawW}px`;
+                element.style.height = `${drawH}px`;
+                // Position element so its center aligns with cx, cy
+                element.style.left = `${cx - drawW / 2}px`;
+                element.style.top = `${cy - drawH / 2}px`;
+                element.style.transform = `rotate(${settings.rotation}deg)`;
+                element.style.filter = filterString;
             }
-            ctx.restore();
         }
+
+        // 10. Draw Overlays (Selection / OCR)
+        // Draw Selection Box
+        if (selectionStart && selectionEnd) {
+            ctx.filter = 'none'; // Reset filter for UI
+            const startX = selectionStart.x;
+            const startY = selectionStart.y;
+            const w = selectionEnd.x - startX;
+            const h = selectionEnd.y - startY;
+
+            ctx.strokeStyle = '#00ffff';
+            ctx.lineWidth = 2;
+            ctx.setLineDash([5, 5]);
+            ctx.strokeRect(startX, startY, w, h);
+            ctx.setLineDash([]);
+            
+            ctx.fillStyle = 'rgba(0, 255, 255, 0.1)';
+            ctx.fillRect(startX, startY, w, h);
+        }
+        
+        // Highlights for OCR results usually handled by overlay components, 
+        // but if we were drawing them on canvas:
+        /* 
+        if (ocrResults && ocrResults.length > 0) {
+           // ... drawing code would go here
+        }
+        */
     }
 </script>
 
@@ -244,7 +200,7 @@
 
 <div 
     class="video-layer" 
-    bind:this={videoContainer}
+    bind:this={mediaContainer}
 ></div>
 
 <style>

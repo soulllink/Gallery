@@ -17,6 +17,7 @@
     let canvasRenderer: CanvasRenderer;
     let image: HTMLImageElement | null = null;
     let video: HTMLVideoElement | null = null;
+    let isGif: boolean = false;
     let currentUrl: string | null = null;
     let videoFrame: number | null = null;
     let scrollOffset = 0;
@@ -51,8 +52,13 @@
     $: if (settings && video) {
         video.playbackRate = settings.videoSpeed;
         mediaManager.updateVolume(settings.volume);
-        canvasRenderer?.draw();
     }
+    
+    // Reactive redraw whenever settings, image, or video changes
+    $: if (canvasRenderer && (settings || image || video)) {
+        canvasRenderer.draw();
+    }
+
     $: if (fileItem) loadFileItem(fileItem);
 
     $: tooltipResults = ocrResults.map(res => {
@@ -76,6 +82,7 @@
         const result = await mediaManager.loadFile(item, video, settings);
         image = result.image;
         video = result.video;
+        isGif = result.isGif;
         currentUrl = result.currentUrl;
         scrollOffset = 0;
         panX = 0;
@@ -199,7 +206,8 @@
             if (dist > 50) {
                 blockContextMenu = true;
                 if (Math.abs(deltaX) > Math.abs(deltaY)) {
-                     executeAction(deltaX > 0 ? 'nextFile' : 'prevFile');
+                     // Inverted: Drag Left (deltaX < 0) -> Next, Drag Right (deltaX > 0) -> Prev
+                     executeAction(deltaX > 0 ? 'prevFile' : 'nextFile');
                 }
             }
             isRightClickDown = false;
@@ -486,7 +494,7 @@
 <CanvasRenderer
     bind:this={canvasRenderer}
     bind:canvas={canvas}
-    {image} {video} {settings}
+    {image} {video} {isGif} {settings}
     {panX} {panY} {scrollOffset}
     isOCRMode={$isOCRMode}
     {selectionStart} {selectionEnd}
